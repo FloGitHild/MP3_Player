@@ -8,7 +8,8 @@ DEFAULT_SETTINGS = {
     "fade_out_ms": 50,
     "last_folder": "",
     "restore_last_folder": True,
-    "normalize_volume": False
+    "normalize_volume": False,
+    "limiter": True
 }
 
 
@@ -83,5 +84,12 @@ class Settings:
     def normalize_volume(self, value):
         self.settings["normalize_volume"] = value
         self.save()
-
-    # audio_processing removed; only normalize_volume is used
+    
+    @property
+    def limiter(self):
+        return self.settings.get("limiter", True)
+    
+    @limiter.setter
+    def limiter(self, value):
+        self.settings["limiter"] = value
+        self.save()
