@@ -73,18 +73,50 @@ class WaveformWidget(QWidget):
             painter.drawLine(x, int(center_y - amp), x, int(center_y + amp))
 
 class AudioPlayer(QThread):
-    position_changed = pyqtSignal(int)  # ✅ DAS FEHLT BEI DIR
+    position_changed = pyqtSignal(int)
     finished = pyqtSignal()
     
     def __init__(self):
         super().__init__()
         pygame.mixer.init()
+        pygame.mixer.pre_init(44100, -16, 2, 1024)
         self.current_file = None
         self.is_playing = False
         self.is_paused = False
         self._running = True
         self.duration = 0
-        self.start_offset = 0   # 🔥 NEU
+        self.start_offset = 0
+        self.fade_volume = 1.0
+        self.fading = False
+        
+    def fade_in(self, duration_ms=100):
+        if self.fading:
+            return
+        self.fading = True
+        self.fade_volume = 0.0
+        steps = 10
+        delay = duration_ms // steps
+        for i in range(steps + 1):
+            self.fade_volume = i / steps
+            pygame.mixer.music.set_volume(self.fade_volume)
+            QThread.msleep(delay)
+        pygame.mixer.music.set_volume(1.0)
+        self.fading = False
+    
+    def fade_out(self, duration_ms=100):
+        if self.fading:
+            return
+        self.fading = True
+        steps = 10
+        delay = duration_ms // steps
+        for i in range(steps, -1, -1):
+            self.fade_volume = i / steps
+            pygame.mixer.music.set_volume(self.fade_volume)
+            QThread.msleep(delay)
+        pygame.mixer.music.pause()
+        pygame.mixer.music.set_volume(1.0)
+        self.fading = False
+        self.is_paused = True
         
     def run(self):
         while self._running:
@@ -118,18 +150,22 @@ class AudioPlayer(QThread):
     
     def play(self):
         if self.current_file:
-            self.start_offset = 0  # 🔥 RESET
+            self.start_offset = 0
+            pygame.mixer.music.set_volume(0)
             pygame.mixer.music.play()
             self.is_playing = True
             self.is_paused = False
+            self.fade_in()
     
     def pause(self):
-        pygame.mixer.music.pause()
+        self.fade_out()
         self.is_paused = True
     
     def unpause(self):
+        pygame.mixer.music.set_volume(0)
         pygame.mixer.music.unpause()
         self.is_paused = False
+        self.fade_in()
     
     def stop(self):
         pygame.mixer.music.stop()
@@ -137,12 +173,12 @@ class AudioPlayer(QThread):
     
     def seek(self, position):
         self.start_offset = position
-
         pygame.mixer.music.stop()
+        pygame.mixer.music.set_volume(0)
         pygame.mixer.music.play(1, position / 1000)
-
         self.is_playing = True
         self.is_paused = False
+        self.fade_in()
     
     def get_duration(self):
         return self.duration
