@@ -129,16 +129,19 @@ class AudioPlayer(QThread):
         while self._running:
             if self.is_playing and not self.is_paused:
                 pos = pygame.mixer.music.get_pos()
-
+                
                 if pos >= 0:
                     corrected = pos + self.start_offset
-
-                    # 🔥 verhindert negatives / reset glitch
+                    
                     if corrected < 0:
                         corrected = self.start_offset
-
+                    
                     self.position_changed.emit(corrected)
-
+                
+                if not pygame.mixer.music.get_busy() and self.is_playing and not self.is_paused and self.duration > 0:
+                    self.is_playing = False
+                    self.finished.emit()
+            
             self.msleep(100)
     
     def load(self, filepath):
@@ -332,10 +335,10 @@ class MusicPlayer(QMainWindow):
         playbar_layout.addLayout(controls_layout)
         
         time_layout = QHBoxLayout()
-        time_layout.setContentsMargins(0, 0, 0, 0)
+        time_layout.setContentsMargins(5, 0, 5, 0)
         self.current_time_label = QLabel("0:00")
         self.current_time_label.setStyleSheet("color: #b0b0b0; font-size: 11px;")
-        self.current_time_label.setFixedWidth(40)
+        self.current_time_label.setFixedWidth(45)
         time_layout.addWidget(self.current_time_label)
         
         self.waveform_slider = WaveformSlider()
@@ -347,7 +350,7 @@ class MusicPlayer(QMainWindow):
         
         self.total_time_label = QLabel("0:00")
         self.total_time_label.setStyleSheet("color: #b0b0b0; font-size: 11px;")
-        self.total_time_label.setFixedWidth(40)
+        self.total_time_label.setFixedWidth(45)
         time_layout.addWidget(self.total_time_label)
         
         playbar_layout.addLayout(time_layout)
