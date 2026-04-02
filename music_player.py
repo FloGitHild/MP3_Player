@@ -10,7 +10,7 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QTableWidgetItem, QPushButton, QLabel, QSlider, QMenuBar,
                              QMenu, QFileDialog, QMessageBox, QAbstractItemView, QHeaderView,
                              QSplitter, QDialog, QSizePolicy)
-from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal
+from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal, QModelIndex, QItemSelectionModel, QItemSelectionModel
 from PyQt6.QtGui import QAction, QColor, QPainter, QPen
 from mutagen.mp3 import MP3
 from mutagen import MutagenError
@@ -697,35 +697,47 @@ class MusicPlayer(QMainWindow):
     
     def move_up(self):
         rows = sorted(set(item.row() for item in self.playlist_table.selectedItems()))
+        if not rows:
+            return
+        
         playing_row = self.current_track_index
+        new_rows = []
         
         for row in rows:
             if row > 0:
                 self.playlist[row], self.playlist[row - 1] = self.playlist[row - 1], self.playlist[row]
+                new_rows.append(row - 1)
                 if row == playing_row:
-                    playing_row = row - 1
-                elif row - 1 == playing_row:
-                    playing_row = row
+                    self.current_track_index = row - 1
+            else:
+                new_rows.append(row)
         
         self.update_playlist_table()
-        if 0 <= playing_row < len(self.playlist):
-            self.playlist_table.selectRow(playing_row)
+        
+        for row in new_rows:
+            self.playlist_table.selectRow(row)
     
     def move_down(self):
         rows = sorted(set(item.row() for item in self.playlist_table.selectedItems()), reverse=True)
+        if not rows:
+            return
+        
         playing_row = self.current_track_index
+        new_rows = []
         
         for row in rows:
             if row < len(self.playlist) - 1:
                 self.playlist[row], self.playlist[row + 1] = self.playlist[row + 1], self.playlist[row]
+                new_rows.append(row + 1)
                 if row == playing_row:
-                    playing_row = row + 1
-                elif row + 1 == playing_row:
-                    playing_row = row
+                    self.current_track_index = row + 1
+            else:
+                new_rows.append(row)
         
         self.update_playlist_table()
-        if 0 <= playing_row < len(self.playlist):
-            self.playlist_table.selectRow(playing_row)
+        
+        for row in new_rows:
+            self.playlist_table.selectRow(row)
     
     def play_track_from_playlist(self, item):
         row = item.row()
@@ -748,7 +760,6 @@ class MusicPlayer(QMainWindow):
         if not self.playlist:
             return
 
-        # 🔥 Wenn nichts läuft → ausgewählten Track starten
         if self.current_track_index == -1:
             selected = self.playlist_table.currentRow()
 
@@ -758,7 +769,7 @@ class MusicPlayer(QMainWindow):
                 self.play_track(0)
             return
 
-        # 🔥 normal play/pause
+
         if self.audio_player.is_playing_state():
             self.audio_player.pause()
             self.play_btn.setText("▶")
