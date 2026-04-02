@@ -4,11 +4,12 @@ import datetime
 import pygame
 import numpy as np
 import tempfile
+from settings import Settings
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                              QHBoxLayout, QTreeWidget, QTreeWidgetItem, QTableWidget,
                              QTableWidgetItem, QPushButton, QLabel, QSlider, QMenuBar,
                              QMenu, QFileDialog, QMessageBox, QAbstractItemView, QHeaderView,
-                             QSplitter)
+                             QSplitter, QDialog)
 from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal
 from PyQt6.QtGui import QAction, QColor, QPainter, QPen
 from mutagen.mp3 import MP3
@@ -88,14 +89,18 @@ class AudioPlayer(QThread):
         self.start_offset = 0
         self.fade_volume = 1.0
         self.fading = False
+        self.fade_in_duration = 50
+        self.fade_out_duration = 50
         
-    def fade_in(self, duration_ms=100):
+    def fade_in(self, duration_ms=None):
         if self.fading:
             return
+        if duration_ms is None:
+            duration_ms = self.fade_in_duration
         self.fading = True
         self.fade_volume = 0.0
         steps = 10
-        delay = duration_ms // steps
+        delay = max(1, duration_ms // steps)
         for i in range(steps + 1):
             self.fade_volume = i / steps
             pygame.mixer.music.set_volume(self.fade_volume)
@@ -103,12 +108,14 @@ class AudioPlayer(QThread):
         pygame.mixer.music.set_volume(1.0)
         self.fading = False
     
-    def fade_out(self, duration_ms=100):
+    def fade_out(self, duration_ms=None):
         if self.fading:
             return
+        if duration_ms is None:
+            duration_ms = self.fade_out_duration
         self.fading = True
         steps = 10
-        delay = duration_ms // steps
+        delay = max(1, duration_ms // steps)
         for i in range(steps, -1, -1):
             self.fade_volume = i / steps
             pygame.mixer.music.set_volume(self.fade_volume)
@@ -198,38 +205,26 @@ class MusicPlayer(QMainWindow):
         self.setGeometry(100, 100, 1000, 700)
         self.setMinimumSize(900, 600)
         
+        self.settings = Settings()
+        
         self.playlist = []
         self.current_track_index = -1
-        self.last_folder = self.load_last_folder()
+        
+        last_folder = ""
+        if self.settings.restore_last_folder:
+            last_folder = self.settings.last_folder
         
         self.audio_player = AudioPlayer()
         self.audio_player.position_changed.connect(self.update_position)
         self.audio_player.finished.connect(self.track_finished)
+        self.audio_player.fade_in_duration = self.settings.fade_in_ms
+        self.audio_player.fade_out_duration = self.settings.fade_out_ms
         self.audio_player.start()
         
         self.setup_ui()
-        self.load_directory(self.last_folder if self.last_folder else os.path.expanduser("~"))
+        self.setup_menu()
+        self.load_directory(last_folder if last_folder and os.path.isdir(last_folder) else os.path.expanduser("~"))
     
-    def load_last_folder(self):
-        config_file = os.path.join(os.path.expanduser("~"), ".music_player_config")
-        try:
-            if os.path.exists(config_file):
-                with open(config_file, "r") as f:
-                    folder = f.read().strip()
-                    if os.path.isdir(folder):
-                        return folder
-        except:
-            pass
-        return None
-    
-    def save_last_folder(self, folder):
-        config_file = os.path.join(os.path.expanduser("~"), ".music_player_config")
-        try:
-            with open(config_file, "w") as f:
-                f.write(folder)
-        except:
-            pass
-        
     def setup_ui(self):
         self.central_widget = QWidget()
         self.setCentralWidget(self.central_widget)
@@ -238,17 +233,118 @@ class MusicPlayer(QMainWindow):
         self.main_layout.setSpacing(0)
         
         self.splitter = QSplitter(Qt.Orientation.Horizontal)
-        self.splitter.setHandleWidth(5)
-        self.splitter.setStretchFactor(0, 1)
-        self.splitter.setStretchFactor(1, 1)
-        self.splitter.setOpaqueResize(True)
-        self.splitter.setChildrenCollapsible(False)
         
-        self.setup_menu()
-        self.setup_file_browser()
-        self.setup_playlist()
+        browser_widget = QWidget()
+        browser_layout = QVBoxLayout(browser_widget)
+        browser_layout.setContentsMargins(10, 10, 5, 10)
         
-        self.setup_playbar()
+        browser_label = QLabel("File Browser")
+        browser_label.setStyleSheet("font-size: 14px; font-weight: bold; color: #ffffff;")
+        browser_layout.addWidget(browser_label)
+        
+        self.file_tree = QTreeWidget()
+        self.file_tree.setHeaderHidden(True)
+        self.file_tree.itemDoubleClicked.connect(self.on_item_double_clicked)
+        self.file_tree.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        browser_layout.addWidget(self.file_tree)
+        
+        add_btn = QPushButton("Add to Playlist")
+        add_btn.clicked.connect(self.add_selected_to_playlist)
+        browser_layout.addWidget(add_btn)
+        
+        self.splitter.addWidget(browser_widget)
+        
+        playlist_widget = QWidget()
+        playlist_layout = QVBoxLayout(playlist_widget)
+        playlist_layout.setContentsMargins(5, 10, 10, 10)
+        
+        playlist_label = QLabel("Playlist")
+        playlist_label.setStyleSheet("font-size: 14px; font-weight: bold; color: #ffffff;")
+        playlist_layout.addWidget(playlist_label)
+        
+        self.playlist_table = QTableWidget()
+        self.playlist_table.setColumnCount(6)
+        self.playlist_table.setHorizontalHeaderLabels(["#", "Title", "Artist", "Year", "Changed", "Duration"])
+        self.playlist_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.playlist_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.playlist_table.setShowGrid(True)
+        self.playlist_table.horizontalHeader().setStretchLastSection(False)
+        for i in range(6):
+            self.playlist_table.horizontalHeader().setSectionResizeMode(i, QHeaderView.ResizeMode.Fixed)
+        self.playlist_table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.playlist_table.horizontalHeader().sectionClicked.connect(self.on_header_clicked)
+        self.playlist_table.itemDoubleClicked.connect(self.play_track_from_playlist)
+        playlist_layout.addWidget(self.playlist_table)
+        
+        btn_layout = QHBoxLayout()
+        remove_btn = QPushButton("Remove")
+        remove_btn.clicked.connect(self.remove_from_playlist)
+        btn_layout.addWidget(remove_btn)
+        btn_layout.addStretch()
+        
+        up_btn = QPushButton("↑")
+        up_btn.setFixedWidth(40)
+        up_btn.clicked.connect(self.move_up)
+        btn_layout.addWidget(up_btn)
+        
+        down_btn = QPushButton("↓")
+        down_btn.setFixedWidth(40)
+        down_btn.clicked.connect(self.move_down)
+        btn_layout.addWidget(down_btn)
+        
+        playlist_layout.addLayout(btn_layout)
+        
+        self.splitter.addWidget(playlist_widget)
+        self.splitter.setSizes([300, 500])
+        
+        self.playbar = QWidget()
+        self.playbar.setStyleSheet("background-color: #282828; padding: 10px;")
+        playbar_layout = QVBoxLayout(self.playbar)
+        playbar_layout.setContentsMargins(15, 5, 15, 5)
+        
+        self.track_label = QLabel("No track selected")
+        self.track_label.setStyleSheet("font-size: 13px; color: #e0e0e0;")
+        playbar_layout.addWidget(self.track_label)
+        
+        time_layout = QHBoxLayout()
+        self.current_time_label = QLabel("0:00")
+        self.current_time_label.setStyleSheet("color: #b0b0b0; font-size: 11px;")
+        time_layout.addWidget(self.current_time_label)
+        
+        self.waveform_slider = WaveformSlider()
+        self.waveform_slider.setMinimumHeight(70)
+        self.waveform_slider.sliderPressed.connect(self.on_slider_pressed)
+        self.waveform_slider.sliderReleased.connect(self.on_slider_released)
+        self.waveform_slider.positionChanged.connect(self.on_slider_changed)
+        time_layout.addWidget(self.waveform_slider)
+        
+        self.total_time_label = QLabel("0:00")
+        self.total_time_label.setStyleSheet("color: #b0b0b0; font-size: 11px;")
+        time_layout.addWidget(self.total_time_label)
+        
+        playbar_layout.addLayout(time_layout)
+        
+        controls_layout = QHBoxLayout()
+        
+        self.prev_btn = QPushButton("◀◀")
+        self.prev_btn.setFixedSize(40, 40)
+        self.prev_btn.clicked.connect(self.previous_track)
+        controls_layout.addWidget(self.prev_btn)
+        
+        self.play_btn = QPushButton("▶")
+        self.play_btn.setFixedSize(50, 50)
+        self.play_btn.setStyleSheet("font-size: 20px; background-color: #1db954; border-radius: 25px;")
+        self.play_btn.clicked.connect(self.toggle_play_pause)
+        controls_layout.addWidget(self.play_btn)
+        
+        self.next_btn = QPushButton("▶▶")
+        self.next_btn.setFixedSize(40, 40)
+        self.next_btn.clicked.connect(self.next_track)
+        controls_layout.addWidget(self.next_btn)
+        
+        controls_layout.addStretch()
+        
+        playbar_layout.addLayout(controls_layout)
         
         self.main_layout.addWidget(self.splitter)
         self.main_layout.addWidget(self.playbar)
@@ -260,7 +356,6 @@ class MusicPlayer(QMainWindow):
             QTreeWidget::item { padding: 5px; }
             QTreeWidget::item:selected { background-color: #555555; color: #ffffff; }
             QTreeWidget::item:alternate { background-color: #454545; }
-            QTreeWidget { background-color: #3a3a3a; border: none; color: #a0a0a0; padding: 10px; }
             QTableWidget { background-color: #3a3a3a; border: none; color: #a0a0a0; gridline-color: #505050; }
             QTableWidget::item { padding: 8px; border-right: 1px solid #505050; background-color: #3a3a3a; }
             QTableWidget::item:alternate { background-color: #454545; }
@@ -279,6 +374,8 @@ class MusicPlayer(QMainWindow):
             QMenu::item:selected { background-color: #505050; }
             QSplitter::handle { background-color: #555555; width: 3px; }
         """)
+        
+        self.slider_pressed = False
     
     def setup_menu(self):
         menubar = self.menuBar()
@@ -303,158 +400,97 @@ class MusicPlayer(QMainWindow):
         clear_playlist_action.triggered.connect(self.clear_playlist)
         playlist_menu.addAction(clear_playlist_action)
         
+        settings_menu = menubar.addMenu("Settings")
+        settings_action = QAction("Preferences", self)
+        settings_action.triggered.connect(self.show_settings)
+        settings_menu.addAction(settings_action)
+        
         help_menu = menubar.addMenu("Help")
         about_action = QAction("About", self)
         about_action.triggered.connect(self.show_about)
         help_menu.addAction(about_action)
     
-    def setup_file_browser(self):
-        browser_widget = QWidget()
-        browser_layout = QVBoxLayout(browser_widget)
-        browser_layout.setContentsMargins(10, 10, 5, 10)
+    def show_settings(self):
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Settings")
+        dialog.setMinimumWidth(350)
         
-        browser_header = QHBoxLayout()
-        browser_label = QLabel("File Browser")
-        browser_label.setStyleSheet("font-size: 14px; font-weight: bold; color: #ffffff;")
-        browser_header.addWidget(browser_label)
-        browser_header.addStretch()
-        browser_layout.addLayout(browser_header)
+        layout = QVBoxLayout()
         
-        self.file_tree = QTreeWidget()
-        self.file_tree.setHeaderHidden(True)
-        self.file_tree.setAlternatingRowColors(True)
-        self.file_tree.itemDoubleClicked.connect(self.on_item_double_clicked)
-        self.file_tree.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.file_tree.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        browser_layout.addWidget(self.file_tree)
+        fade_label = QLabel("Fade Settings")
+        fade_label.setStyleSheet("font-weight: bold; font-size: 14px;")
+        layout.addWidget(fade_label)
         
-        button_layout = QHBoxLayout()
-        add_btn = QPushButton("Add to Playlist")
-        add_btn.clicked.connect(self.add_selected_to_playlist)
-        button_layout.addWidget(add_btn)
-        browser_layout.addLayout(button_layout)
+        fade_in_btn = QPushButton("Fade In: " + str(self.settings.fade_in_ms) + " ms")
+        fade_in_btn.setMinimumHeight(40)
         
-        self.splitter.addWidget(browser_widget)
-        self.splitter.setSizes([300, 500])
+        def cycle_fade_in():
+            values = [25, 50, 75, 100, 150, 200]
+            current = self.settings.fade_in_ms
+            idx = values.index(current) if current in values else 0
+            next_val = values[(idx + 1) % len(values)]
+            self.settings.fade_in_ms = next_val
+            fade_in_btn.setText("Fade In: " + str(next_val) + " ms")
+            self.audio_player.fade_in_duration = next_val
+        
+        fade_in_btn.clicked.connect(cycle_fade_in)
+        layout.addWidget(fade_in_btn)
+        
+        fade_out_btn = QPushButton("Fade Out: " + str(self.settings.fade_out_ms) + " ms")
+        fade_out_btn.setMinimumHeight(40)
+        
+        def cycle_fade_out():
+            values = [25, 50, 75, 100, 150, 200]
+            current = self.settings.fade_out_ms
+            idx = values.index(current) if current in values else 0
+            next_val = values[(idx + 1) % len(values)]
+            self.settings.fade_out_ms = next_val
+            fade_out_btn.setText("Fade Out: " + str(next_val) + " ms")
+            self.audio_player.fade_out_duration = next_val
+        
+        fade_out_btn.clicked.connect(cycle_fade_out)
+        layout.addWidget(fade_out_btn)
+        
+        layout.addSpacing(20)
+        
+        folder_label = QLabel("Folder Settings")
+        folder_label.setStyleSheet("font-weight: bold; font-size: 14px;")
+        layout.addWidget(folder_label)
+        
+        restore_btn = QPushButton("Restore Last Folder: ON" if self.settings.restore_last_folder else "Restore Last Folder: OFF")
+        restore_btn.setMinimumHeight(40)
+        
+        def toggle_restore():
+            new_val = not self.settings.restore_last_folder
+            self.settings.restore_last_folder = new_val
+            restore_btn.setText("Restore Last Folder: ON" if new_val else "Restore Last Folder: OFF")
+        
+        restore_btn.clicked.connect(toggle_restore)
+        layout.addWidget(restore_btn)
+        
+        layout.addStretch()
+        
+        close_btn = QPushButton("Close")
+        close_btn.setDefault(True)
+        close_btn.setMinimumHeight(40)
+        close_btn.clicked.connect(dialog.close)
+        layout.addWidget(close_btn)
+        
+        dialog.setLayout(layout)
+        dialog.exec()
     
-    def setup_playlist(self):
-        playlist_widget = QWidget()
-        playlist_layout = QVBoxLayout(playlist_widget)
-        playlist_layout.setContentsMargins(5, 10, 10, 10)
-        
-        playlist_header = QHBoxLayout()
-        playlist_label = QLabel("Playlist")
-        playlist_label.setStyleSheet("font-size: 14px; font-weight: bold; color: #ffffff;")
-        playlist_header.addWidget(playlist_label)
-        playlist_header.addStretch()
-        
-        playlist_layout.addLayout(playlist_header)
-        
-        self.playlist_table = QTableWidget()
-        self.playlist_table.setColumnCount(6)
-        self.playlist_table.setHorizontalHeaderLabels(["#", "Title", "Artist", "Year", "Date", "Duration"])
-        self.playlist_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self.playlist_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self.playlist_table.setShowGrid(True)
-        self.playlist_table.horizontalHeader().setStretchLastSection(False)
-        for i in range(6):
-            self.playlist_table.horizontalHeader().setSectionResizeMode(i, QHeaderView.ResizeMode.Fixed)
-        self.playlist_table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.playlist_table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        self.playlist_table.itemDoubleClicked.connect(self.play_track_from_playlist)
-        
-        header = self.playlist_table.horizontalHeader()
-        header.sectionClicked.connect(self.on_header_clicked)
-        
-        playlist_layout.addWidget(self.playlist_table)
-        
-        button_layout = QHBoxLayout()
-        remove_btn = QPushButton("Remove")
-        remove_btn.clicked.connect(self.remove_from_playlist)
-        button_layout.addWidget(remove_btn)
-        button_layout.addStretch()
-        
-        up_btn = QPushButton("↑")
-        up_btn.setFixedWidth(40)
-        up_btn.clicked.connect(self.move_up)
-        button_layout.addWidget(up_btn)
-        
-        down_btn = QPushButton("↓")
-        down_btn.setFixedWidth(40)
-        down_btn.clicked.connect(self.move_down)
-        button_layout.addWidget(down_btn)
-        
-        playlist_layout.addLayout(button_layout)
-        
-        self.splitter.addWidget(playlist_widget)
+    def open_folder(self):
+        folder = QFileDialog.getExistingDirectory(self, "Select Folder")
+        if folder:
+            self.settings.last_folder = folder
+            self.load_directory(folder)
     
-    def setup_playbar(self):
-        self.playbar = QWidget()
-        self.playbar.setStyleSheet("background-color: #282828; padding: 10px;")
-        playbar_layout = QVBoxLayout(self.playbar)
-        playbar_layout.setContentsMargins(15, 5, 15, 5)
-
-        # ===== Titel (JETZT OBEN!) =====
-        self.track_label = QLabel("No track selected")
-        self.track_label.setStyleSheet("font-size: 13px; color: #e0e0e0;")
-        playbar_layout.addWidget(self.track_label)
-
-        # ===== Zeit + Waveform =====
-        time_layout = QHBoxLayout()
-
-        self.current_time_label = QLabel("0:00")
-        self.current_time_label.setStyleSheet("color: #b0b0b0; font-size: 11px;")
-        time_layout.addWidget(self.current_time_label)
-
-        self.waveform_slider = WaveformSlider()
-        self.waveform_slider.setMinimumHeight(70)
-
-        # Signals
-        self.waveform_slider.sliderPressed.connect(self.on_slider_pressed)
-        self.waveform_slider.sliderReleased.connect(self.on_slider_released)
-        self.waveform_slider.positionChanged.connect(self.on_slider_changed)
-
-        time_layout.addWidget(self.waveform_slider)
-
-        self.total_time_label = QLabel("0:00")
-        self.total_time_label.setStyleSheet("color: #b0b0b0; font-size: 11px;")
-        time_layout.addWidget(self.total_time_label)
-
-        playbar_layout.addLayout(time_layout)
-
-        # ===== Controls =====
-        controls_layout = QHBoxLayout()
-
-        self.prev_btn = QPushButton("◀◀")
-        self.prev_btn.clicked.connect(self.previous_track)
-        controls_layout.addWidget(self.prev_btn)
-
-        self.play_btn = QPushButton("▶")
-        self.play_btn.clicked.connect(self.toggle_play_pause)
-        controls_layout.addWidget(self.play_btn)
-
-        self.next_btn = QPushButton("▶▶")
-        self.next_btn.clicked.connect(self.next_track)
-        controls_layout.addWidget(self.next_btn)
-
-        controls_layout.addStretch()
-
-        playbar_layout.addLayout(controls_layout)
-
-        self.slider_pressed = False 
-    
-    def load_waveform(self, filepath):
-        widget = WaveformWidget()
-        widget.load_waveform(filepath)
-        return widget.waveform_data
-        
     def load_directory(self, path):
         self.file_tree.clear()
         self.populate_tree(None, path, lazy=False)
     
     def populate_tree(self, parent, path, lazy=True):
         try:
-            items = []
             for item in sorted(os.listdir(path)):
                 item_path = os.path.join(path, item)
                 if os.path.isdir(item_path):
@@ -495,11 +531,36 @@ class MusicPlayer(QMainWindow):
         elif item_type == "file":
             self.add_to_playlist(path)
     
-    def open_folder(self):
-        folder = QFileDialog.getExistingDirectory(self, "Select Folder")
-        if folder:
-            self.save_last_folder(folder)
-            self.load_directory(folder)
+    def on_slider_pressed(self):
+        self.slider_pressed = True
+        self.slider_was_playing = self.audio_player.is_playing_state()
+        if self.slider_was_playing:
+            self.audio_player.pause()
+    
+    def on_slider_released(self):
+        duration = self.audio_player.get_duration()
+        if duration > 0:
+            position = int(self.waveform_slider.progress * duration / 1000)
+            self.audio_player.seek(position)
+            self.current_time_label.setText(self.format_time(int(position / 1000)))
+        
+        if self.slider_was_playing:
+            self.audio_player.unpause()
+            self.play_btn.setText("⏸")
+        
+        self.slider_pressed = False
+
+    def on_slider_changed(self, value):
+        if self.slider_pressed:
+            duration = self.audio_player.get_duration()
+            if duration > 0:
+                pos_ms = int(value * duration / 1000)
+                self.current_time_label.setText(self.format_time(int(pos_ms / 1000)))
+    
+    def load_waveform(self, filepath):
+        widget = WaveformWidget()
+        widget.load_waveform(filepath)
+        return widget.waveform_data
     
     def add_to_playlist(self, filepath):
         title = os.path.splitext(os.path.basename(filepath))[0]
@@ -585,7 +646,7 @@ class MusicPlayer(QMainWindow):
         elif column == 3:
             self.playlist.sort(key=lambda x: x.get('year', ''), reverse=reverse)
         elif column == 4:
-            self.playlist.sort(key=lambda x: x.get('date', ''), reverse=reverse)
+            self.playlist.sort(key=lambda x: x.get('mtime', 0), reverse=reverse)
         elif column == 5:
             self.playlist.sort(key=lambda x: x.get('duration_sec', 0), reverse=reverse)
         self.update_playlist_table()
