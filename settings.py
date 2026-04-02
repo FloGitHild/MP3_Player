@@ -83,3 +83,5 @@ class Settings:
     def normalize_volume(self, value):
         self.settings["normalize_volume"] = value
         self.save()
+
+    # audio_processing removed; only normalize_volume is used

@@ -11,7 +11,7 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QMenu, QFileDialog, QMessageBox, QAbstractItemView, QHeaderView,
                              QSplitter, QDialog, QSizePolicy)
 from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal
-from PyQt6.QtGui import QAction, QColor, QPainter, QPen
+from PyQt6.QtGui import QAction, QColor, QPainter, QPen, QBrush
 from mutagen.mp3 import MP3
 from mutagen._util import MutagenError
 
@@ -86,7 +86,7 @@ class AudioPlayer(QThread):
                     self.is_playing = False
                     self.finished.emit()
             
-            self.msleep(100)
+            self.msleep(5)
     
     def load(self, filepath):
         try:
@@ -143,6 +143,88 @@ class AudioPlayer(QThread):
     def stop_thread(self):
         self._running = False
         self.wait()
+
+
+class SoundAnalyzer(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.level = 0.0
+        self.peak = 0.0
+        self.clipped = False
+        self.history = [0.0] * 32
+        self.setMinimumWidth(70)
+        self.setMinimumHeight(200)
+        self.setStyleSheet("background-color: #3a3a3a;")
+        
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self.update)
+        self.timer.start(50)
+    
+    def set_level(self, value, clipped=False):
+        self.level = max(0.0, min(1.0, value))
+        self.peak = max(self.peak, self.level)
+        self.clipped = clipped
+        self.history.append(self.level)
+        self.history = self.history[-32:]
+    
+    def reset(self):
+        self.level = 0.0
+        self.peak = 0.0
+        self.clipped = False
+        self.history = [0.0] * 32
+    
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        
+        w = self.width()
+        h = self.height()
+        
+        margin = 4
+        bar_width = w - margin * 2
+        bar_height = h - margin * 2 - 50
+        bar_top = margin + 6
+        
+        painter.fillRect(int(margin - 1), int(bar_top - 1), int(bar_width + 2), int(bar_height + 2), QColor("#2a2a2a"))
+        
+        segments = 20
+        seg_height = bar_height / segments
+        seg_gap = 2
+        
+        for i in range(segments):
+            seg_y = int(bar_top + bar_height - (i + 1) * seg_height)
+            seg_level = i / segments
+            
+            if seg_level <= self.level:
+                if i < segments * 0.7:
+                    color = QColor("#1db954")
+                elif i < segments * 0.85:
+                    color = QColor("#f0c000")
+                else:
+                    color = QColor("#e74c3c")
+                painter.fillRect(int(margin), seg_y, int(bar_width), int(seg_height - seg_gap), color)
+            else:
+                painter.fillRect(int(margin), seg_y, int(bar_width), int(seg_height - seg_gap), QColor("#454545"))
+        
+        peak_y = int(bar_top + bar_height - self.peak * bar_height)
+        painter.fillRect(int(margin), peak_y - 1, int(bar_width), 2, QColor("#ffffff"))
+        
+        clip_color = QColor("#4a9eff") if self.clipped else QColor("#454545")
+        painter.fillRect(int(margin), int(margin), int(bar_width), 4, clip_color)
+        
+        history_y = int(bar_top + bar_height + 8)
+        history_h = h - history_y - 2
+        if history_h > 10 and len(self.history) > 1:
+            step = bar_width / (len(self.history) - 1)
+            for i in range(1, len(self.history)):
+                x1 = int(margin + (i - 1) * step)
+                x2 = int(margin + i * step)
+                y1 = int(history_y + history_h - self.history[i - 1] * history_h)
+                y2 = int(history_y + history_h - self.history[i] * history_h)
+                pen = QPen(QColor("#1db954"))
+                pen.setWidth(1)
+                painter.setPen(pen)
+                painter.drawLine(x1, y1, x2, y2)
 
 
 class MusicPlayer(QMainWindow):
@@ -262,7 +344,22 @@ class MusicPlayer(QMainWindow):
         playlist_layout.addLayout(btn_layout)
         
         self.splitter.addWidget(playlist_widget)
-        self.splitter.setSizes([300, 500])
+        
+        analyzer_widget = QWidget()
+        analyzer_widget.setMinimumWidth(80)
+        analyzer_widget.setMaximumWidth(100)
+        analyzer_layout = QVBoxLayout(analyzer_widget)
+        analyzer_layout.setContentsMargins(3, 10, 3, 10)
+        
+        analyzer_label = QLabel("Level")
+        analyzer_label.setStyleSheet("font-size: 12px; font-weight: bold; color: #ffffff;")
+        analyzer_layout.addWidget(analyzer_label)
+        
+        self.sound_analyzer = SoundAnalyzer()
+        analyzer_layout.addWidget(self.sound_analyzer)
+        
+        self.splitter.addWidget(analyzer_widget)
+        self.splitter.setSizes([300, 500, 90])
         
         self.playbar = QWidget()
         self.playbar.setStyleSheet("background-color: #282828; padding: 10px;")
@@ -464,7 +561,8 @@ class MusicPlayer(QMainWindow):
         
         normalize_btn.clicked.connect(toggle_normalize)
         layout.addWidget(normalize_btn)
-        
+
+        # Audiobehandlung-UI-Element entfernt; Normalize Volume steuert das Verhalten direkt
         layout.addStretch()
         
         close_btn = QPushButton("Close")
@@ -559,14 +657,29 @@ class MusicPlayer(QMainWindow):
             from pydub import AudioSegment
             audio = AudioSegment.from_file(filepath)
             samples = np.array(audio.get_array_of_samples())
+            bits = audio.sample_width * 8
+            max_val = float(2 ** (bits - 1))
             if audio.channels == 2:
-                samples = samples.reshape((-1, 2)).mean(axis=1)
-            samples = samples.astype(float)
-            samples /= np.max(np.abs(samples))
-            if len(samples) > 5000:
-                indices = np.linspace(0, len(samples) - 1, 1000, dtype=int)
-                samples = samples[indices]
-            return np.abs(samples)
+                frames = samples.reshape((-1, 2)).astype(np.float32)
+                left = frames[:, 0]
+                right = frames[:, 1]
+                left = np.abs(left) / max_val
+                right = np.abs(right) / max_val
+                data = np.vstack([left, right])
+            else:
+                mono = samples.astype(np.float32)
+                mono = np.abs(mono) / max_val
+                data = mono
+            if len(data.shape) > 1:
+                n = min(data.shape[1], 1000)
+                if data.shape[1] > 1000:
+                    indices = np.linspace(0, data.shape[1] - 1, 1000, dtype=int)
+                    data = data[:, indices]
+            else:
+                if len(data) > 5000:
+                    indices = np.linspace(0, len(data) - 1, 1000, dtype=int)
+                    data = data[indices]
+            return data
         except Exception as e:
             print("Waveform error:", e)
             return None
@@ -733,12 +846,42 @@ class MusicPlayer(QMainWindow):
             if self.settings.normalize_volume:
                 try:
                     from pydub import AudioSegment
-                    from pydub.effects import normalize
+                    import numpy as np
                     audio = AudioSegment.from_file(filepath)
-                    normalized = normalize(audio, headroom=0.1)
-                    temp_path = os.path.join(tempfile.gettempdir(), "normalized_track.wav")
-                    normalized.export(temp_path, format="wav")
-                    filepath = temp_path
+                    samples = np.array(audio.get_array_of_samples()).astype(np.float32)
+                    # Preserve stereo if present; do not force mono during normalization
+                    if audio.channels == 2:
+                        frames = samples.reshape((-1, 2))  # shape: (n_frames, 2)
+                        rms = np.sqrt(np.mean(frames ** 2))
+                        if rms > 0:
+                            scale = 8000.0 / rms
+                            frames = frames * scale
+                            frames = np.clip(frames, -32768, 32767)
+                            interleaved = frames.astype(np.int16).reshape(-1)
+                            normalized = AudioSegment(
+                                interleaved.tobytes(),
+                                frame_rate=audio.frame_rate,
+                                sample_width=2,
+                                channels=2
+                            )
+                            temp_path = os.path.join(tempfile.gettempdir(), "normalized_track.wav")
+                            normalized.export(temp_path, format="wav")
+                            filepath = temp_path
+                    else:
+                        rms = np.sqrt(np.mean(samples ** 2))
+                        if rms > 0:
+                            scale = 8500.0 / rms
+                            samples = samples * scale
+                            samples = np.clip(samples, -32768, 32767)
+                        normalized = AudioSegment(
+                            samples.astype(np.int16).tobytes(),
+                            frame_rate=audio.frame_rate,
+                            sample_width=2,
+                            channels=1
+                        )
+                        temp_path = os.path.join(tempfile.gettempdir(), "normalized_track.wav")
+                        normalized.export(temp_path, format="wav")
+                        filepath = temp_path
                 except Exception as e:
                     print("Normalize error:", e)
             
@@ -750,7 +893,7 @@ class MusicPlayer(QMainWindow):
                 self.track_label.setText(f"{track['title']} - {track['artist']}")
                 self.play_btn.setText("⏸")
                 self.playlist_table.selectRow(index)
-                data = self.load_waveform(track['filepath'])
+                data = self.load_waveform(filepath)
                 self.waveform_slider.set_waveform(data)
     
     def toggle_play_pause(self):
@@ -796,6 +939,35 @@ class MusicPlayer(QMainWindow):
         self.waveform_slider.set_progress(value)
         self.current_time_label.setText(self.format_time(int(pos / 1000)))
         self.total_time_label.setText(self.format_time(int(duration / 1000)))
+        
+        if self.audio_player.is_playing_state() and self.current_track_index >= 0:
+            try:
+                import numpy as np
+                from pydub import AudioSegment
+                
+                if not hasattr(self, '_cached_audio') or self._cached_track != self.current_track_index:
+                    filepath = self.playlist[self.current_track_index]['filepath']
+                    audio = AudioSegment.from_file(filepath)
+                    self._cached_audio = audio
+                    self._cached_samples = np.array(audio.get_array_of_samples()).astype(float)
+                    if audio.channels == 2:
+                        self._cached_samples = self._cached_samples.reshape((-1, 2)).mean(axis=1)
+                    self._cached_track = self.current_track_index
+                
+                total_samples = len(self._cached_samples)
+                if total_samples > 0 and duration > 0:
+                    pos_ratio = pos / duration
+                    sample_idx = int(pos_ratio * total_samples)
+                    window = 2205
+                    start = max(0, sample_idx - window // 2)
+                    end = min(total_samples, sample_idx + window // 2)
+                    chunk = self._cached_samples[start:end]
+                    if len(chunk) > 0:
+                        level = np.sqrt(np.mean(chunk ** 2)) / 32767.0
+                        clipped = level > 1.0
+                        self.sound_analyzer.set_level(min(1.0, level * 3), clipped)
+            except Exception:
+                pass
     
     def track_finished(self):
         if self.current_track_index < len(self.playlist) - 1:
@@ -915,17 +1087,41 @@ class WaveformSlider(QWidget):
         h = self.height()
         center = h // 2
 
-        # ===== Waveform (oben + unten!) =====
+        # ===== Waveform (Stereo oder Mono) =====
         if self.waveform_data is not None:
-            pen = QPen(QColor("#1db954"))
-            painter.setPen(pen)
-
-            step = w / len(self.waveform_data)
-
-            for i, val in enumerate(self.waveform_data):
-                x = int(i * step)
-                amp = int(val * center * 0.9)
-                painter.drawLine(x, center - amp, x, center + amp)
+            if isinstance(self.waveform_data, (list, tuple,)):
+                data = None
+            else:
+                data = self.waveform_data
+            # Stereo: 2 x N array
+            if isinstance(data, type(None)):
+                data = self.waveform_data
+            if isinstance(data, (list,  tuple)):
+                # Fallback to mono rendering
+                mono = np.array(data, dtype=float)
+                step = w / max(len(mono), 1)
+                pen = QPen(QColor("#1db954"))
+                painter.setPen(pen)
+                for i, val in enumerate(mono):
+                    x = int(i * step)
+                    amp = int(val * center * 0.9)
+                    painter.drawLine(x, center - amp, x, center + amp)
+            elif isinstance(data, np.ndarray) and data.ndim == 2:
+                left = data[0]
+                right = data[1]
+                n = min(len(left), len(right))
+                if n <= 0:
+                    return
+                step = w / max(n, 1)
+                # Draw left channel in green, right channel in blue
+                for i in range(n):
+                    x = int(i * step)
+                    l_amp = int(left[i] * center * 0.9)
+                    r_amp = int(right[i] * center * 0.9)
+                    painter.setPen(QPen(QColor("#1db954")))
+                    painter.drawLine(x, center - l_amp, x, center + l_amp)
+                    painter.setPen(QPen(QColor("#3b82f6")))
+                    painter.drawLine(x, center - r_amp, x, center + r_amp)
 
         # ===== Progress Overlay =====
         progress_x = int((self.progress / 1000) * w)
