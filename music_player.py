@@ -402,8 +402,11 @@ class MusicPlayer(QMainWindow):
         save_playlist_action = QAction("Save Playlist", self)
         save_playlist_action.triggered.connect(self.save_playlist)
         playlist_menu.addAction(save_playlist_action)
+        
         load_playlist_action = QAction("Load Playlist", self)
         load_playlist_action.triggered.connect(self.load_playlist)
+        playlist_menu.addAction(load_playlist_action)
+        
         playlist_menu.addSeparator()
         clear_playlist_action = QAction("Clear Playlist", self)
         clear_playlist_action.triggered.connect(self.clear_playlist)
@@ -673,17 +676,25 @@ class MusicPlayer(QMainWindow):
     
     def move_up(self):
         rows = sorted(set(item.row() for item in self.playlist_table.selectedItems()))
+        if not rows:
+            return
+        new_row = rows[0] - 1 if rows[0] > 0 else 0
         for row in rows:
             if row > 0:
                 self.playlist[row], self.playlist[row - 1] = self.playlist[row - 1], self.playlist[row]
         self.update_playlist_table()
+        self.playlist_table.selectRow(new_row)
     
     def move_down(self):
         rows = sorted(set(item.row() for item in self.playlist_table.selectedItems()), reverse=True)
+        if not rows:
+            return
+        new_row = rows[0] + 1 if rows[0] < len(self.playlist) - 1 else len(self.playlist) - 1
         for row in rows:
             if row < len(self.playlist) - 1:
                 self.playlist[row], self.playlist[row + 1] = self.playlist[row + 1], self.playlist[row]
         self.update_playlist_table()
+        self.playlist_table.selectRow(new_row)
     
     def play_track_from_playlist(self, item):
         row = item.row()
@@ -798,22 +809,26 @@ class MusicPlayer(QMainWindow):
         if not self.playlist:
             return
         
-        filename, _ = QFileDialog.getSaveFileName(self, "Save Playlist", "", "M3U Playlist (*.m3u)")
+        filename, _ = QFileDialog.getSaveFileName(self, "Save Playlist", "", "JSON Playlist (*.json)")
         if filename:
+            if not filename.endswith('.json'):
+                filename += '.json'
+            import json
             with open(filename, 'w', encoding='utf-8') as f:
-                for track in self.playlist:
-                    f.write(track['filepath'] + '\n')
+                json.dump(self.playlist, f, indent=2, ensure_ascii=False)
             QMessageBox.information(self, "Success", "Playlist saved successfully!")
     
     def load_playlist(self):
-        filename, _ = QFileDialog.getOpenFileName(self, "Load Playlist", "", "M3U Playlist (*.m3u)")
+        filename, _ = QFileDialog.getOpenFileName(self, "Load Playlist", "", "JSON Playlist (*.json)")
         if filename:
-            self.playlist.clear()
+            import json
             with open(filename, 'r', encoding='utf-8') as f:
-                for line in f:
-                    filepath = line.strip()
-                    if os.path.exists(filepath):
-                        self.add_to_playlist(filepath)
+                data = json.load(f)
+            self.playlist.clear()
+            for track in data:
+                if os.path.exists(track['filepath']):
+                    self.playlist.append(track)
+            self.update_playlist_table()
             QMessageBox.information(self, "Success", "Playlist loaded successfully!")
     
     def clear_playlist(self):
