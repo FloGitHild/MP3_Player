@@ -7,7 +7,8 @@ DEFAULT_SETTINGS = {
     "fade_in_ms": 50,
     "fade_out_ms": 50,
     "last_folder": "",
-    "restore_last_folder": True
+    "restore_last_folder": True,
+    "normalize_volume": False
 }
 
 
@@ -72,4 +73,13 @@ class Settings:
     @restore_last_folder.setter
     def restore_last_folder(self, value):
         self.settings["restore_last_folder"] = value
+        self.save()
+    
+    @property
+    def normalize_volume(self):
+        return self.settings.get("normalize_volume", False)
+    
+    @normalize_volume.setter
+    def normalize_volume(self, value):
+        self.settings["normalize_volume"] = value
         self.save()

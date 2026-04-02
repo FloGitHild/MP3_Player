@@ -34,6 +34,7 @@ class AudioPlayer(QThread):
         self.fading = False
         self.fade_in_duration = 50
         self.fade_out_duration = 50
+        self.target_volume = 1.0
         
     def fade_in(self, duration_ms=None):
         if self.fading:
@@ -46,9 +47,9 @@ class AudioPlayer(QThread):
         delay = max(1, duration_ms // steps)
         for i in range(steps + 1):
             self.fade_volume = i / steps
-            pygame.mixer.music.set_volume(self.fade_volume)
+            pygame.mixer.music.set_volume(self.fade_volume * self.target_volume)
             QThread.msleep(delay)
-        pygame.mixer.music.set_volume(1.0)
+        pygame.mixer.music.set_volume(self.target_volume)
         self.fading = False
     
     def fade_out(self, duration_ms=None):
@@ -239,7 +240,7 @@ class MusicPlayer(QMainWindow):
             self.playlist_table.horizontalHeader().setSectionResizeMode(i, QHeaderView.ResizeMode.Fixed)
         self.playlist_table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.playlist_table.horizontalHeader().sectionClicked.connect(self.on_header_clicked)
-        self.playlist_table.itemDoubleClicked.connect(self.play_track_from_playlist)
+        self.playlist_table.cellDoubleClicked.connect(self.play_track_from_cell)
         playlist_layout.addWidget(self.playlist_table)
         
         btn_layout = QHBoxLayout()
@@ -446,6 +447,23 @@ class MusicPlayer(QMainWindow):
         
         restore_btn.clicked.connect(toggle_restore)
         layout.addWidget(restore_btn)
+        
+        layout.addSpacing(20)
+        
+        vol_label = QLabel("Volume Settings")
+        vol_label.setStyleSheet("font-weight: bold; font-size: 14px;")
+        layout.addWidget(vol_label)
+        
+        normalize_btn = QPushButton("Normalize Volume: ON" if self.settings.normalize_volume else "Normalize Volume: OFF")
+        normalize_btn.setMinimumHeight(40)
+        
+        def toggle_normalize():
+            new_val = not self.settings.normalize_volume
+            self.settings.normalize_volume = new_val
+            normalize_btn.setText("Normalize Volume: ON" if new_val else "Normalize Volume: OFF")
+        
+        normalize_btn.clicked.connect(toggle_normalize)
+        layout.addWidget(normalize_btn)
         
         layout.addStretch()
         
@@ -698,12 +716,36 @@ class MusicPlayer(QMainWindow):
         row = item.row()
         self.play_track(row)
     
+    def play_track_from_cell(self, row, column):
+        self.play_track(row)
+    
     def play_track(self, index):
         if 0 <= index < len(self.playlist):
             self.current_track_index = index
             track = self.playlist[index]
             
-            if self.audio_player.load(track['filepath']):
+            self.audio_player.stop()
+            QThread.msleep(50)
+            
+            filepath = track['filepath']
+            original_duration = track['duration_sec'] * 1000
+            
+            if self.settings.normalize_volume:
+                try:
+                    from pydub import AudioSegment
+                    from pydub.effects import normalize
+                    audio = AudioSegment.from_file(filepath)
+                    normalized = normalize(audio, headroom=0.1)
+                    temp_path = os.path.join(tempfile.gettempdir(), "normalized_track.wav")
+                    normalized.export(temp_path, format="wav")
+                    filepath = temp_path
+                except Exception as e:
+                    print("Normalize error:", e)
+            
+            self.audio_player.target_volume = 1.0
+            
+            if self.audio_player.load(filepath):
+                self.audio_player.duration = original_duration
                 self.audio_player.play()
                 self.track_label.setText(f"{track['title']} - {track['artist']}")
                 self.play_btn.setText("⏸")

@@ -10,68 +10,11 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QTableWidgetItem, QPushButton, QLabel, QSlider, QMenuBar,
                              QMenu, QFileDialog, QMessageBox, QAbstractItemView, QHeaderView,
                              QSplitter, QDialog, QSizePolicy)
-from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal, QModelIndex, QItemSelectionModel, QItemSelectionModel
+from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal
 from PyQt6.QtGui import QAction, QColor, QPainter, QPen
 from mutagen.mp3 import MP3
-from mutagen import MutagenError
+from mutagen._util import MutagenError
 
-
-class WaveformWidget(QWidget):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.waveform_data = None
-        self.setMinimumHeight(50)
-        self.setMaximumHeight(60)
-    
-    def load_waveform(self, filepath):
-        try:
-            from pydub import AudioSegment
-
-            # 🔥 MP3/WAV laden
-            audio = AudioSegment.from_file(filepath)
-
-            # auf mono reduzieren (wichtig für einfache Darstellung)
-            samples = np.array(audio.get_array_of_samples())
-
-            if audio.channels == 2:
-                samples = samples.reshape((-1, 2))
-                samples = samples.mean(axis=1)
-
-            samples = samples.astype(float)
-
-            # normalisieren
-            samples /= np.max(np.abs(samples))
-
-            # runter-samplen für Performance
-            if len(samples) > 5000:
-                indices = np.linspace(0, len(samples) - 1, 1000, dtype=int)
-                samples = samples[indices]
-
-            self.waveform_data = np.abs(samples)
-            self.update()
-
-        except Exception as e:
-            print("Waveform error:", e)
-            self.waveform_data = None
-            self.update()
-    
-    def paintEvent(self, event):
-        if self.waveform_data is None:
-            return
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        pen = QPen(QColor("#1db954"))
-        pen.setWidth(1)
-        painter.setPen(pen)
-        width = self.width()
-        height = self.height()
-        data = self.waveform_data
-        step = width / len(data)
-        center_y = height / 2
-        for i, val in enumerate(data):
-            x = int(i * step)
-            amp = min(val * center_y * 0.9, center_y * 0.9)
-            painter.drawLine(x, int(center_y - amp), x, int(center_y + amp))
 
 class AudioPlayer(QThread):
     position_changed = pyqtSignal(int)
@@ -594,9 +537,21 @@ class MusicPlayer(QMainWindow):
                 self.current_time_label.setText(self.format_time(int(pos_ms / 1000)))
     
     def load_waveform(self, filepath):
-        widget = WaveformWidget()
-        widget.load_waveform(filepath)
-        return widget.waveform_data
+        try:
+            from pydub import AudioSegment
+            audio = AudioSegment.from_file(filepath)
+            samples = np.array(audio.get_array_of_samples())
+            if audio.channels == 2:
+                samples = samples.reshape((-1, 2)).mean(axis=1)
+            samples = samples.astype(float)
+            samples /= np.max(np.abs(samples))
+            if len(samples) > 5000:
+                indices = np.linspace(0, len(samples) - 1, 1000, dtype=int)
+                samples = samples[indices]
+            return np.abs(samples)
+        except Exception as e:
+            print("Waveform error:", e)
+            return None
     
     def add_to_playlist(self, filepath):
         title = os.path.splitext(os.path.basename(filepath))[0]
@@ -800,42 +755,6 @@ class MusicPlayer(QMainWindow):
         self.current_time_label.setText(self.format_time(int(pos / 1000)))
         self.total_time_label.setText(self.format_time(int(duration / 1000)))
     
-    def update_progress(self):
-        pos = pygame.mixer.music.get_pos()
-        if pos > 0:
-            duration = self.audio_player.get_duration()
-            if duration > 0:
-                value = int(pos * 1000 / duration)
-                self.waveform_slider.set_progress(value)
-                self.current_time_label.setText(self.format_time(int(pos / 1000)))
-                self.total_time_label.setText(self.format_time(int(duration / 1000)))
-    
-    def on_slider_pressed(self):
-        self.slider_pressed = True
-        self.slider_was_playing = self.audio_player.is_playing_state()
-        if self.slider_was_playing:
-            self.audio_player.pause()
-    
-    def on_slider_released(self):
-        duration = self.audio_player.get_duration()
-        if duration > 0:
-            position = int(self.waveform_slider.progress * duration / 1000)
-            self.audio_player.seek(position)
-            self.current_time_label.setText(self.format_time(int(position / 1000)))
-        
-        if self.slider_was_playing:
-            self.audio_player.unpause()
-            self.play_btn.setText("⏸")
-        
-        self.slider_pressed = False
-
-    def on_slider_changed(self, value):
-        if self.slider_pressed:
-            duration = self.audio_player.get_duration()
-            if duration > 0:
-                pos_ms = int(value * duration / 1000)
-                self.current_time_label.setText(self.format_time(int(pos_ms / 1000)))
-    
     def track_finished(self):
         if self.current_track_index < len(self.playlist) - 1:
             self.next_track()
@@ -974,46 +893,6 @@ class WaveformSlider(QWidget):
         pen.setWidth(2)
         painter.setPen(pen)
         painter.drawLine(progress_x, 0, progress_x, h)
-
-class WaveformBackground(QWidget):
-    def __init__(self, slider, parent=None):
-        super().__init__(parent)
-        self.slider = slider
-        self.waveform_data = None
-
-        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
-        self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground)
-
-    def set_waveform(self, data):
-        self.waveform_data = data
-        self.update()
-
-    def paintEvent(self, event):
-        if self.waveform_data is None:
-            return
-
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-
-        w = self.width()
-        h = self.height()
-        center = h // 2
-
-        pen = QPen(QColor(80, 200, 120, 120))
-        pen.setWidth(1)
-        painter.setPen(pen)
-
-        step = max(1, int(len(self.waveform_data) / w))
-
-        for x in range(w):
-            idx = x * step
-            if idx >= len(self.waveform_data):
-                break
-
-            val = self.waveform_data[idx]
-            amp = int(val * center * 0.8)
-
-            painter.drawLine(x, center - amp, x, center + amp)
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
