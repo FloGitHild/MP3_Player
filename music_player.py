@@ -9,7 +9,7 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QHBoxLayout, QTreeWidget, QTreeWidgetItem, QTableWidget,
                              QTableWidgetItem, QPushButton, QLabel, QSlider, QMenuBar,
                              QMenu, QFileDialog, QMessageBox, QAbstractItemView, QHeaderView,
-                             QSplitter, QDialog)
+                             QSplitter, QDialog, QSizePolicy)
 from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal
 from PyQt6.QtGui import QAction, QColor, QPainter, QPen
 from mutagen.mp3 import MP3
@@ -302,28 +302,6 @@ class MusicPlayer(QMainWindow):
         playbar_layout = QVBoxLayout(self.playbar)
         playbar_layout.setContentsMargins(15, 5, 15, 5)
         
-        self.track_label = QLabel("No track selected")
-        self.track_label.setStyleSheet("font-size: 13px; color: #e0e0e0;")
-        playbar_layout.addWidget(self.track_label)
-        
-        time_layout = QHBoxLayout()
-        self.current_time_label = QLabel("0:00")
-        self.current_time_label.setStyleSheet("color: #b0b0b0; font-size: 11px;")
-        time_layout.addWidget(self.current_time_label)
-        
-        self.waveform_slider = WaveformSlider()
-        self.waveform_slider.setMinimumHeight(70)
-        self.waveform_slider.sliderPressed.connect(self.on_slider_pressed)
-        self.waveform_slider.sliderReleased.connect(self.on_slider_released)
-        self.waveform_slider.positionChanged.connect(self.on_slider_changed)
-        time_layout.addWidget(self.waveform_slider)
-        
-        self.total_time_label = QLabel("0:00")
-        self.total_time_label.setStyleSheet("color: #b0b0b0; font-size: 11px;")
-        time_layout.addWidget(self.total_time_label)
-        
-        playbar_layout.addLayout(time_layout)
-        
         controls_layout = QHBoxLayout()
         
         self.prev_btn = QPushButton("◀◀")
@@ -344,7 +322,35 @@ class MusicPlayer(QMainWindow):
         
         controls_layout.addStretch()
         
+        self.track_label = QLabel("No track selected")
+        self.track_label.setStyleSheet("font-size: 13px; color: #e0e0e0;")
+        self.track_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        controls_layout.addWidget(self.track_label)
+        
+        controls_layout.addStretch()
+        
         playbar_layout.addLayout(controls_layout)
+        
+        time_layout = QHBoxLayout()
+        time_layout.setContentsMargins(0, 0, 0, 0)
+        self.current_time_label = QLabel("0:00")
+        self.current_time_label.setStyleSheet("color: #b0b0b0; font-size: 11px;")
+        self.current_time_label.setFixedWidth(40)
+        time_layout.addWidget(self.current_time_label)
+        
+        self.waveform_slider = WaveformSlider()
+        self.waveform_slider.setMinimumHeight(70)
+        self.waveform_slider.sliderPressed.connect(self.on_slider_pressed)
+        self.waveform_slider.sliderReleased.connect(self.on_slider_released)
+        self.waveform_slider.positionChanged.connect(self.on_slider_changed)
+        time_layout.addWidget(self.waveform_slider, 1)
+        
+        self.total_time_label = QLabel("0:00")
+        self.total_time_label.setStyleSheet("color: #b0b0b0; font-size: 11px;")
+        self.total_time_label.setFixedWidth(40)
+        time_layout.addWidget(self.total_time_label)
+        
+        playbar_layout.addLayout(time_layout)
         
         self.main_layout.addWidget(self.splitter)
         self.main_layout.addWidget(self.playbar)
