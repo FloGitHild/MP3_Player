@@ -261,18 +261,38 @@ class MusicPlayer(QMainWindow):
         playlist_layout = QVBoxLayout(playlist_widget)
         playlist_layout.setContentsMargins(5, 10, 10, 10)
         
+        header_layout = QHBoxLayout()
         playlist_label = QLabel("Playlist")
         playlist_label.setStyleSheet("font-size: 14px; font-weight: bold; color: #ffffff;")
-        playlist_layout.addWidget(playlist_label)
+        header_layout.addWidget(playlist_label)
+        
+        load_pl_btn = QPushButton("Load Playlist")
+        load_pl_btn.setStyleSheet("padding: 2px 8px; font-size: 11px;")
+        load_pl_btn.clicked.connect(self.load_playlist)
+        header_layout.addWidget(load_pl_btn)
+        
+        save_pl_btn = QPushButton("Save Playlist")
+        save_pl_btn.setStyleSheet("padding: 2px 8px; font-size: 11px;")
+        save_pl_btn.clicked.connect(self.save_playlist)
+        header_layout.addWidget(save_pl_btn)
+        
+        clear_pl_btn = QPushButton("Clear Playlist")
+        clear_pl_btn.setStyleSheet("padding: 2px 8px; font-size: 11px;")
+        clear_pl_btn.clicked.connect(self.clear_playlist)
+        header_layout.addWidget(clear_pl_btn)
+        
+        header_layout.addStretch()
+        playlist_layout.addLayout(header_layout)
         
         self.playlist_table = QTableWidget()
-        self.playlist_table.setColumnCount(6)
-        self.playlist_table.setHorizontalHeaderLabels(["#", "Title", "Artist", "Year", "Changed", "Duration"])
+        self.playlist_table.setColumnCount(5)
+        self.playlist_table.setHorizontalHeaderLabels(["Title", "Artist", "Year", "Changed", "Duration"])
         self.playlist_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.playlist_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.playlist_table.setShowGrid(True)
+        self.playlist_table.verticalHeader().setVisible(False)
         self.playlist_table.horizontalHeader().setStretchLastSection(False)
-        for i in range(6):
+        for i in range(5):
             self.playlist_table.horizontalHeader().setSectionResizeMode(i, QHeaderView.ResizeMode.Fixed)
         self.playlist_table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.playlist_table.horizontalHeader().sectionClicked.connect(self.on_header_clicked)
@@ -365,10 +385,16 @@ class MusicPlayer(QMainWindow):
             QTreeWidget::item { padding: 5px; }
             QTreeWidget::item:selected { background-color: #555555; color: #ffffff; }
             QTreeWidget::item:alternate { background-color: #454545; }
+            QTreeWidget QScrollBar:vertical { background: #3a3a3a; }
+            QTreeWidget QScrollBar::handle:vertical { background: #1db954; border-radius: 4px; min-height: 30px; }
+            QTreeWidget QScrollBar::add-line:vertical, QTreeWidget QScrollBar::sub-line:vertical { height: 0px; }
             QTableWidget { background-color: #3a3a3a; border: none; color: #a0a0a0; gridline-color: #505050; }
             QTableWidget::item { padding: 8px; border-right: 1px solid #505050; background-color: #3a3a3a; }
             QTableWidget::item:alternate { background-color: #454545; }
             QTableWidget::item:selected { background-color: #555555; color: #ffffff; }
+            QTableWidget QScrollBar:vertical { background: #3a3a3a; }
+            QTableWidget QScrollBar::handle:vertical { background: #1db954; border-radius: 4px; min-height: 30px; }
+            QTableWidget QScrollBar::add-line:vertical, QTableWidget QScrollBar::sub-line:vertical { height: 0px; }
             QHeaderView::section { background-color: #454545; color: #a0a0a0; padding: 8px; border: none; border-right: 1px solid #505050; }
             QPushButton { background-color: #505050; color: #cccccc; border: none; padding: 8px 16px; border-radius: 4px; }
             QPushButton:hover { background-color: #606060; }
@@ -377,10 +403,10 @@ class MusicPlayer(QMainWindow):
             QSlider::groove:horizontal { background: #505050; height: 6px; border-radius: 3px; }
             QSlider::handle:horizontal { background: #1db954; width: 14px; margin: -4px 0; border-radius: 7px; }
             QSlider::sub-page:horizontal { background: #1db954; border-radius: 3px; }
-            QMenuBar { background-color: #3a3a3a; color: #cccccc; }
-            QMenuBar::item:selected { background-color: #505050; }
-            QMenu { background-color: #3a3a3a; color: #cccccc; }
-            QMenu::item:selected { background-color: #505050; }
+            QMenuBar { background-color: #454545; color: #ffffff; }
+            QMenuBar::item:selected { background-color: #555555; color: #ffffff; }
+            QMenu { background-color: #3a3a3a; color: #ffffff; }
+            QMenu::item:selected { background-color: #555555; color: #ffffff; }
             QSplitter::handle { background-color: #555555; width: 3px; }
         """)
         
@@ -399,11 +425,12 @@ class MusicPlayer(QMainWindow):
         file_menu.addAction(exit_action)
         
         playlist_menu = menubar.addMenu("Playlist")
+        load_playlist_action = QAction("Load Playlist", self)
+        load_playlist_action.triggered.connect(self.load_playlist)
+        playlist_menu.addAction(load_playlist_action)
         save_playlist_action = QAction("Save Playlist", self)
         save_playlist_action.triggered.connect(self.save_playlist)
         playlist_menu.addAction(save_playlist_action)
-        load_playlist_action = QAction("Load Playlist", self)
-        load_playlist_action.triggered.connect(self.load_playlist)
         playlist_menu.addSeparator()
         clear_playlist_action = QAction("Clear Playlist", self)
         clear_playlist_action.triggered.connect(self.clear_playlist)
@@ -640,29 +667,26 @@ class MusicPlayer(QMainWindow):
         self.playlist_table.setRowCount(len(self.playlist))
         
         for i, track in enumerate(self.playlist):
-            self.playlist_table.setItem(i, 0, QTableWidgetItem(str(i + 1)))
-            self.playlist_table.setItem(i, 1, QTableWidgetItem(track['title']))
-            self.playlist_table.setItem(i, 2, QTableWidgetItem(track['artist']))
-            self.playlist_table.setItem(i, 3, QTableWidgetItem(str(track.get('year', ''))))
-            self.playlist_table.setItem(i, 4, QTableWidgetItem(str(track.get('date', ''))))
-            self.playlist_table.setItem(i, 5, QTableWidgetItem(track['duration']))
+            self.playlist_table.setItem(i, 0, QTableWidgetItem(track['title']))
+            self.playlist_table.setItem(i, 1, QTableWidgetItem(track['artist']))
+            self.playlist_table.setItem(i, 2, QTableWidgetItem(str(track.get('year', ''))))
+            self.playlist_table.setItem(i, 3, QTableWidgetItem(str(track.get('date', ''))))
+            self.playlist_table.setItem(i, 4, QTableWidgetItem(track['duration']))
     
     def sort_playlist(self, column, reverse=False):
-        if column == 1:
+        if column == 0:
             self.playlist.sort(key=lambda x: x['title'].lower(), reverse=reverse)
-        elif column == 2:
+        elif column == 1:
             self.playlist.sort(key=lambda x: x['artist'].lower(), reverse=reverse)
-        elif column == 3:
+        elif column == 2:
             self.playlist.sort(key=lambda x: x.get('year', ''), reverse=reverse)
-        elif column == 4:
+        elif column == 3:
             self.playlist.sort(key=lambda x: x.get('mtime', 0), reverse=reverse)
-        elif column == 5:
+        elif column == 4:
             self.playlist.sort(key=lambda x: x.get('duration_sec', 0), reverse=reverse)
         self.update_playlist_table()
     
     def on_header_clicked(self, column):
-        if column == 0:
-            return
         if hasattr(self, 'last_sort_column') and self.last_sort_column == column:
             reverse = not self.last_sort_reverse
         else:
@@ -673,17 +697,35 @@ class MusicPlayer(QMainWindow):
     
     def move_up(self):
         rows = sorted(set(item.row() for item in self.playlist_table.selectedItems()))
+        playing_row = self.current_track_index
+        
         for row in rows:
             if row > 0:
                 self.playlist[row], self.playlist[row - 1] = self.playlist[row - 1], self.playlist[row]
+                if row == playing_row:
+                    playing_row = row - 1
+                elif row - 1 == playing_row:
+                    playing_row = row
+        
         self.update_playlist_table()
+        if 0 <= playing_row < len(self.playlist):
+            self.playlist_table.selectRow(playing_row)
     
     def move_down(self):
         rows = sorted(set(item.row() for item in self.playlist_table.selectedItems()), reverse=True)
+        playing_row = self.current_track_index
+        
         for row in rows:
             if row < len(self.playlist) - 1:
                 self.playlist[row], self.playlist[row + 1] = self.playlist[row + 1], self.playlist[row]
+                if row == playing_row:
+                    playing_row = row + 1
+                elif row + 1 == playing_row:
+                    playing_row = row
+        
         self.update_playlist_table()
+        if 0 <= playing_row < len(self.playlist):
+            self.playlist_table.selectRow(playing_row)
     
     def play_track_from_playlist(self, item):
         row = item.row()
@@ -798,22 +840,26 @@ class MusicPlayer(QMainWindow):
         if not self.playlist:
             return
         
-        filename, _ = QFileDialog.getSaveFileName(self, "Save Playlist", "", "M3U Playlist (*.m3u)")
+        filename, _ = QFileDialog.getSaveFileName(self, "Save Playlist", "", "JSON Playlist (*.json)")
         if filename:
+            if not filename.endswith('.json'):
+                filename += '.json'
+            import json
             with open(filename, 'w', encoding='utf-8') as f:
-                for track in self.playlist:
-                    f.write(track['filepath'] + '\n')
+                json.dump(self.playlist, f, indent=2, ensure_ascii=False)
             QMessageBox.information(self, "Success", "Playlist saved successfully!")
     
     def load_playlist(self):
-        filename, _ = QFileDialog.getOpenFileName(self, "Load Playlist", "", "M3U Playlist (*.m3u)")
+        filename, _ = QFileDialog.getOpenFileName(self, "Load Playlist", "", "JSON Playlist (*.json)")
         if filename:
-            self.playlist.clear()
+            import json
             with open(filename, 'r', encoding='utf-8') as f:
-                for line in f:
-                    filepath = line.strip()
-                    if os.path.exists(filepath):
-                        self.add_to_playlist(filepath)
+                data = json.load(f)
+            self.playlist.clear()
+            for track in data:
+                if os.path.exists(track['filepath']):
+                    self.playlist.append(track)
+            self.update_playlist_table()
             QMessageBox.information(self, "Success", "Playlist loaded successfully!")
     
     def clear_playlist(self):
@@ -833,19 +879,17 @@ class MusicPlayer(QMainWindow):
     
     def apply_proportional_widths(self):
         table_width = self.playlist_table.width()
-        hash_width = int(table_width * 0.05)
         title_width = int(table_width * 0.30)
         artist_width = int(table_width * 0.30)
         year_width = int(table_width * 0.125)
-        date_width = int(table_width * 0.1125)
-        duration_width = table_width - hash_width - title_width - artist_width - year_width - date_width
+        changed_width = int(table_width * 0.125)
+        duration_width = table_width - title_width - artist_width - year_width - changed_width
         
-        self.playlist_table.setColumnWidth(0, hash_width)
-        self.playlist_table.setColumnWidth(1, title_width)
-        self.playlist_table.setColumnWidth(2, artist_width)
-        self.playlist_table.setColumnWidth(3, year_width)
-        self.playlist_table.setColumnWidth(4, date_width)
-        self.playlist_table.setColumnWidth(5, duration_width)
+        self.playlist_table.setColumnWidth(0, title_width)
+        self.playlist_table.setColumnWidth(1, artist_width)
+        self.playlist_table.setColumnWidth(2, year_width)
+        self.playlist_table.setColumnWidth(3, changed_width)
+        self.playlist_table.setColumnWidth(4, duration_width)
     
     def closeEvent(self, event):
         self.audio_player.stop_thread()
@@ -944,7 +988,6 @@ class WaveformBackground(QWidget):
         h = self.height()
         center = h // 2
 
-        # 🔥 dezente Farbe (nicht mehr grell)
         pen = QPen(QColor(80, 200, 120, 120))
         pen.setWidth(1)
         painter.setPen(pen)
