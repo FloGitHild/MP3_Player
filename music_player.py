@@ -19,7 +19,7 @@ from mutagen._util import MutagenError
 
 NORMALIZE_RMS_TARGET = 9000.0
 NORMALIZE_MAX_CLIP = 32767
-WAVEFORM_RESOLUTION = 1000
+WAVEFORM_RESOLUTION = 2000
 LEVEL_WINDOW = 2205
 
 
@@ -251,6 +251,7 @@ class MusicPlayer(QMainWindow):
         self.slider_pressed = False
         self._cached_audio = None
         self._cached_track = -1
+        self.shuffle_enabled = False
 
         last_folder = ""
         if self.settings.restore_last_folder:
@@ -358,6 +359,13 @@ class MusicPlayer(QMainWindow):
 
         self.play_btn = None
         controls = QHBoxLayout()
+        
+        self.shuffle_btn = QPushButton("🔀")
+        self.shuffle_btn.setFixedSize(40, 40)
+        self.shuffle_btn.setStyleSheet("font-size: 16px; background-color: #505050; border-radius: 20px;")
+        self.shuffle_btn.clicked.connect(self.toggle_shuffle)
+        controls.addWidget(self.shuffle_btn)
+        
         for symbol, handler, size in [
             ("◀◀", self.previous_track, 40),
             ("▶", self.toggle_play_pause, 50),
@@ -918,14 +926,29 @@ class MusicPlayer(QMainWindow):
             self.audio_player.unpause()
             self.play_btn.setText("⏸")
 
+    def toggle_shuffle(self):
+        self.shuffle_enabled = not self.shuffle_enabled
+        if self.shuffle_enabled:
+            self.shuffle_btn.setStyleSheet("font-size: 16px; background-color: #1db954; border-radius: 20px;")
+        else:
+            self.shuffle_btn.setStyleSheet("font-size: 16px; background-color: #505050; border-radius: 20px;")
+
     def previous_track(self):
         if self.current_track_index > 0:
             self.play_track(self.current_track_index - 1)
+        elif self.playlist:
+            self.play_track(len(self.playlist) - 1)
 
     def next_track(self):
-        if self.current_track_index < len(self.playlist) - 1:
+        if not self.playlist:
+            return
+        if self.shuffle_enabled:
+            import random
+            next_idx = random.randint(0, len(self.playlist) - 1)
+            self.play_track(next_idx)
+        elif self.current_track_index < len(self.playlist) - 1:
             self.play_track(self.current_track_index + 1)
-        elif self.playlist:
+        else:
             self.play_track(0)
 
     def update_position(self, pos):
@@ -1026,6 +1049,16 @@ class MusicPlayer(QMainWindow):
     def closeEvent(self, event):
         self.audio_player.stop_thread()
         super().closeEvent(event)
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key.Key_Space:
+            self.toggle_play_pause()
+        elif event.key() == Qt.Key.Key_Left:
+            self.previous_track()
+        elif event.key() == Qt.Key.Key_Right:
+            self.next_track()
+        else:
+            super().keyPressEvent(event)
 
 
 class WaveformSlider(QWidget):
