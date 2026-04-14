@@ -251,6 +251,8 @@ class MusicPlayer(QMainWindow):
         self.slider_pressed = False
         self._cached_audio = None
         self._cached_track = -1
+        self.shuffle_enabled = False
+        self._shuffle_history = []
 
         last_folder = ""
         if self.settings.restore_last_folder:
@@ -362,6 +364,7 @@ class MusicPlayer(QMainWindow):
             ("◀◀", self.previous_track, 40),
             ("▶", self.toggle_play_pause, 50),
             ("▶▶", self.next_track, 40),
+            ("🔀", self.toggle_shuffle, 40),
         ]:
             btn = QPushButton(symbol)
             btn.setFixedSize(size, size)
@@ -371,6 +374,9 @@ class MusicPlayer(QMainWindow):
             controls.addWidget(btn)
             if symbol == "▶":
                 self.play_btn = btn
+            if symbol == "🔀":
+                self.shuffle_btn = btn
+                self.shuffle_btn.setStyleSheet("font-size: 16px;")
         controls.addStretch()
         self.track_label = QLabel("No track selected")
         self.track_label.setStyleSheet("font-size: 13px; color: #e0e0e0;")
@@ -923,10 +929,28 @@ class MusicPlayer(QMainWindow):
             self.play_track(self.current_track_index - 1)
 
     def next_track(self):
-        if self.current_track_index < len(self.playlist) - 1:
+        if self.shuffle_enabled and self.playlist:
+            available = [i for i in range(len(self.playlist)) if i not in self._shuffle_history]
+            if not available:
+                self._shuffle_history = []
+                available = list(range(len(self.playlist)))
+            next_idx = available[np.random.randint(0, len(available))]
+            self._shuffle_history.append(self.current_track_index)
+            if len(self._shuffle_history) > 5:
+                self._shuffle_history.pop(0)
+            self.play_track(next_idx)
+        elif self.current_track_index < len(self.playlist) - 1:
             self.play_track(self.current_track_index + 1)
         elif self.playlist:
             self.play_track(0)
+
+    def toggle_shuffle(self):
+        self.shuffle_enabled = not self.shuffle_enabled
+        self._shuffle_history = []
+        if self.shuffle_enabled:
+            self.shuffle_btn.setStyleSheet("font-size: 16px; background-color: #1db954; border-radius: 5px;")
+        else:
+            self.shuffle_btn.setStyleSheet("font-size: 16px;")
 
     def update_position(self, pos):
         if self.slider_pressed:
@@ -965,7 +989,17 @@ class MusicPlayer(QMainWindow):
                 pass
 
     def track_finished(self):
-        if self.current_track_index < len(self.playlist) - 1:
+        if self.shuffle_enabled and self.playlist:
+            available = [i for i in range(len(self.playlist)) if i not in self._shuffle_history]
+            if not available:
+                self._shuffle_history = []
+                available = list(range(len(self.playlist)))
+            next_idx = available[np.random.randint(0, len(available))]
+            self._shuffle_history.append(self.current_track_index)
+            if len(self._shuffle_history) > 5:
+                self._shuffle_history.pop(0)
+            self.play_track(next_idx)
+        elif self.current_track_index < len(self.playlist) - 1:
             self.next_track()
         else:
             self.play_btn.setText("▶")
@@ -1026,6 +1060,16 @@ class MusicPlayer(QMainWindow):
     def closeEvent(self, event):
         self.audio_player.stop_thread()
         super().closeEvent(event)
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key.Key_Space:
+            self.toggle_play_pause()
+        elif event.key() == Qt.Key.Key_Left:
+            self.previous_track()
+        elif event.key() == Qt.Key.Key_Right:
+            self.next_track()
+        else:
+            super().keyPressEvent(event)
 
 
 class WaveformSlider(QWidget):
