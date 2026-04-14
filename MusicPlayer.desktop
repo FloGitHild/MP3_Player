@@ -1,0 +1,10 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Music Player
+Comment=MP3 Music Player
+Exec=/home/florian/Daten/Florian/Freizeit/MP3_Player/start_music_player.sh
+Icon=/home/florian/Daten/Florian/Freizeit/MP3_Player/icon.png
+Terminal=false
+Categories=Audio;Music;Player;AudioVideo;
+StartupNotify=true

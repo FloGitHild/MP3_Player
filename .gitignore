@@ -1,5 +1,6 @@
-__pycache__/music_player.cpython-312.pyc
+__pycache__/
 *.json
 build/
 dist/
 MP3Player.spec
+*.pyc

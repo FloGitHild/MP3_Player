@@ -13,7 +13,7 @@ from PyQt6.QtWidgets import (
     QSizePolicy,
 )
 from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal
-from PyQt6.QtGui import QAction, QColor, QPainter, QPen
+from PyQt6.QtGui import QAction, QColor, QPainter, QPen, QKeyEvent
 from mutagen.mp3 import MP3
 from mutagen._util import MutagenError
 
@@ -653,6 +653,7 @@ class MusicPlayer(QMainWindow):
                 if len(data) > WAVEFORM_RESOLUTION:
                     indices = np.linspace(0, len(data) - 1, WAVEFORM_RESOLUTION, dtype=int)
                     data = data[indices]
+            print("Waveform geladen:", data.shape if data is not None else None)
             return data
         except Exception as e:
             print("Waveform error:", e)
