@@ -12,8 +12,8 @@ from PyQt6.QtWidgets import (
     QMessageBox, QAbstractItemView, QHeaderView, QSplitter, QDialog,
     QSizePolicy,
 )
-from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal
-from PyQt6.QtGui import QAction, QColor, QPainter, QPen, QKeyEvent
+from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal, QPoint
+from PyQt6.QtGui import QAction, QColor, QPainter, QPen, QKeyEvent, QPolygon
 from mutagen.mp3 import MP3
 from mutagen._util import MutagenError
 
@@ -312,7 +312,7 @@ class MusicPlayer(QMainWindow):
 
         self.playlist_table = QTableWidget()
         self.playlist_table.setColumnCount(5)
-        self.playlist_table.setHorizontalHeaderLabels(["Title", "Artist", "Year", "Changed", "Duration"])
+        self.playlist_table.setHorizontalHeaderLabels(["Title", "Artist", "Year", "Date Created", "Duration"])
         self.playlist_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.playlist_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.playlist_table.setShowGrid(True)
@@ -547,6 +547,14 @@ class MusicPlayer(QMainWindow):
             lambda v: setattr(self.settings, 'limiter', v),
         )
 
+        layout.addSpacing(20)
+        section_header("Display Settings")
+        toggle_button(
+            "Show Waveform",
+            lambda: self.settings.show_waveform,
+            lambda v: setattr(self.settings, 'show_waveform', v),
+        )
+
         layout.addStretch()
         close_btn = QPushButton("Close")
         close_btn.setDefault(True)
@@ -650,15 +658,20 @@ class MusicPlayer(QMainWindow):
                 mono = samples.astype(np.float32)
                 data = np.abs(mono) / max_val
 
+            # Average samples into WAVEFORM_RESOLUTION buckets
             if data.ndim == 2:
                 total = data.shape[1]
                 if total > WAVEFORM_RESOLUTION:
-                    indices = np.linspace(0, total - 1, WAVEFORM_RESOLUTION, dtype=int)
-                    data = data[:, indices]
+                    bucket_size = total // WAVEFORM_RESOLUTION
+                    trimmed = bucket_size * WAVEFORM_RESOLUTION
+                    data = data[:, :trimmed].reshape(2, WAVEFORM_RESOLUTION, bucket_size).mean(axis=2)
             else:
-                if len(data) > WAVEFORM_RESOLUTION:
-                    indices = np.linspace(0, len(data) - 1, WAVEFORM_RESOLUTION, dtype=int)
-                    data = data[indices]
+                total = len(data)
+                if total > WAVEFORM_RESOLUTION:
+                    bucket_size = total // WAVEFORM_RESOLUTION
+                    trimmed = bucket_size * WAVEFORM_RESOLUTION
+                    data = data[:trimmed].reshape(WAVEFORM_RESOLUTION, bucket_size).mean(axis=1)
+
             print("Waveform geladen:", data.shape if data is not None else None)
             return data
         except Exception as e:
@@ -688,8 +701,8 @@ class MusicPlayer(QMainWindow):
             duration = self.format_time(duration_sec)
         except (MutagenError, AttributeError):
             pass
-        mtime = os.path.getmtime(filepath)
-        date = datetime.datetime.fromtimestamp(mtime).strftime("%d.%m.%Y")
+        ctime = os.path.getctime(filepath)
+        date = datetime.datetime.fromtimestamp(ctime).strftime("%d.%m.%Y")
         self.playlist.append({
             'filepath': filepath,
             'title': title,
@@ -698,7 +711,7 @@ class MusicPlayer(QMainWindow):
             'date': date,
             'duration': duration,
             'duration_sec': duration_sec,
-            'mtime': mtime,
+            'ctime': ctime,
         })
         self.update_playlist_table()
 
@@ -736,7 +749,7 @@ class MusicPlayer(QMainWindow):
             self.playlist_table.setItem(i, 4, QTableWidgetItem(track['duration']))
 
     def sort_playlist(self, column, reverse=False):
-        keys = ['title', 'artist', 'year', 'mtime', 'duration_sec']
+        keys = ['title', 'artist', 'year', 'ctime', 'duration_sec']
         if 0 <= column < len(keys):
             self.playlist.sort(
                 key=lambda x: x.get(keys[column], "" if column != 4 else 0),
@@ -823,7 +836,10 @@ class MusicPlayer(QMainWindow):
             self.track_label.setText(f"{track['title']} - {track['artist']}")
             self.play_btn.setText("⏸")
             self.playlist_table.selectRow(index)
-            self.waveform_slider.set_waveform(self.load_waveform(filepath))
+            if self.settings.show_waveform:
+                self.waveform_slider.set_waveform(self.load_waveform(filepath))
+            else:
+                self.waveform_slider.set_waveform(None)
 
     def _normalize_audio(self, filepath):
         try:
@@ -1124,23 +1140,55 @@ class WaveformSlider(QWidget):
                 left, right = data[0], data[1]
                 n = min(len(left), len(right))
                 if n > 0:
-                    step = w / n
-                    for i in range(n):
-                        x = int(i * step)
-                        l_amp = int(left[i] * center * 0.9)
-                        r_amp = int(right[i] * center * 0.9)
-                        painter.setPen(QPen(QColor("#1db954")))
-                        painter.drawLine(x, center - l_amp, x, center + l_amp)
-                        painter.setPen(QPen(QColor("#3b82f6")))
-                        painter.drawLine(x, center - r_amp, x, center + r_amp)
+                    step = w / (n - 1) if n > 1 else w
+                    # Left channel (green, symmetric around center)
+                    painter.setPen(QPen(QColor(29, 185, 84, 180), 1))
+                    for i in range(n - 1):
+                        x1 = int(i * step)
+                        x2 = int((i + 1) * step)
+                        y1_up = center - int(left[i] * center * 0.9)
+                        y2_up = center - int(left[i + 1] * center * 0.9)
+                        y1_down = center + int(left[i] * center * 0.9)
+                        y2_down = center + int(left[i + 1] * center * 0.9)
+                        painter.drawLine(x1, y1_up, x2, y2_up)
+                        painter.drawLine(x1, y1_down, x2, y2_down)
+                    # Right channel (blue, symmetric around center, layered on top)
+                    painter.setPen(QPen(QColor(59, 130, 246, 180), 1))
+                    for i in range(n - 1):
+                        x1 = int(i * step)
+                        x2 = int((i + 1) * step)
+                        y1_up = center - int(right[i] * center * 0.9)
+                        y2_up = center - int(right[i + 1] * center * 0.9)
+                        y1_down = center + int(right[i] * center * 0.9)
+                        y2_down = center + int(right[i + 1] * center * 0.9)
+                        painter.drawLine(x1, y1_up, x2, y2_up)
+                        painter.drawLine(x1, y1_down, x2, y2_down)
             elif isinstance(data, (list, tuple)):
                 mono = np.array(data, dtype=float)
-                step = w / max(len(mono), 1)
-                painter.setPen(QPen(QColor("#1db954")))
-                for i, val in enumerate(mono):
-                    x = int(i * step)
-                    amp = int(val * center * 0.9)
-                    painter.drawLine(x, center - amp, x, center + amp)
+                n = len(mono)
+                if n > 0:
+                    step = w / (n - 1) if n > 1 else w
+                    painter.setPen(QPen(QColor("#1db954"), 1))
+                    for i in range(n - 1):
+                        x1 = int(i * step)
+                        x2 = int((i + 1) * step)
+                        y1_up = center - int(mono[i] * center * 0.9)
+                        y2_up = center - int(mono[i + 1] * center * 0.9)
+                        y1_down = center + int(mono[i] * center * 0.9)
+                        y2_down = center + int(mono[i + 1] * center * 0.9)
+                        painter.drawLine(x1, y1_up, x2, y2_up)
+                        painter.drawLine(x1, y1_down, x2, y2_down)
+
+        # Legend
+        if self.waveform_data is not None and isinstance(self.waveform_data, np.ndarray) and self.waveform_data.ndim == 2:
+            painter.setPen(QPen(QColor(29, 185, 84, 220), 2))
+            painter.drawLine(10, 15, 25, 15)
+            painter.setPen(QPen(QColor(29, 185, 84, 220)))
+            painter.drawText(30, 19, "L")
+            painter.setPen(QPen(QColor(59, 130, 246, 220), 2))
+            painter.drawLine(50, 15, 65, 15)
+            painter.setPen(QPen(QColor(59, 130, 246, 220)))
+            painter.drawText(70, 19, "R")
 
         progress_x = int((self.progress / 1000) * w)
         painter.fillRect(progress_x, 0, w - progress_x, h, QColor(0, 0, 0, 120))

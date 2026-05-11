@@ -9,7 +9,8 @@ DEFAULT_SETTINGS = {
     "last_folder": "",
     "restore_last_folder": True,
     "normalize_volume": False,
-    "limiter": True
+    "limiter": True,
+    "show_waveform": True
 }
 
 
@@ -92,4 +93,13 @@ class Settings:
     @limiter.setter
     def limiter(self, value):
         self.settings["limiter"] = value
+        self.save()
+
+    @property
+    def show_waveform(self):
+        return self.settings.get("show_waveform", True)
+    
+    @show_waveform.setter
+    def show_waveform(self, value):
+        self.settings["show_waveform"] = value
         self.save()

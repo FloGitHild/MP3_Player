@@ -4,3 +4,4 @@ build/
 dist/
 MP3Player.spec
 *.pyc
+__pycache__/*
