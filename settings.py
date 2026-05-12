@@ -10,7 +10,8 @@ DEFAULT_SETTINGS = {
     "restore_last_folder": True,
     "normalize_volume": False,
     "limiter": True,
-    "show_waveform": True
+    "show_waveform": True,
+    "clipping_percent": 10,
 }
 
 
@@ -102,4 +103,13 @@ class Settings:
     @show_waveform.setter
     def show_waveform(self, value):
         self.settings["show_waveform"] = value
+        self.save()
+
+    @property
+    def clipping_percent(self):
+        return self.settings.get("clipping_percent", 10)
+
+    @clipping_percent.setter
+    def clipping_percent(self, value):
+        self.settings["clipping_percent"] = value
         self.save()

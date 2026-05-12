@@ -1,6 +1,7 @@
 import sys
 import os
 import datetime
+import unicodedata
 import pygame
 import numpy as np
 import tempfile
@@ -11,14 +12,13 @@ from PyQt6.QtWidgets import (
     QPushButton, QLabel, QMenuBar, QMenu, QFileDialog,
     QMessageBox, QAbstractItemView, QHeaderView, QSplitter, QDialog,
     QSizePolicy, QLineEdit, QListWidget, QListWidgetItem, QStackedWidget,
+    QSlider,
 )
 from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal, QPoint
 from PyQt6.QtGui import QAction, QColor, QPainter, QPen, QKeyEvent, QPolygon
 from mutagen.mp3 import MP3
 from mutagen._util import MutagenError
 
-NORMALIZE_RMS_TARGET = 9000.0
-NORMALIZE_MAX_CLIP = 32767
 WAVEFORM_RESOLUTION = 1000
 LEVEL_WINDOW = 2205
 
@@ -589,6 +589,27 @@ class MusicPlayer(QMainWindow):
             lambda v: setattr(self.settings, 'limiter', v),
         )
 
+        clip_layout = QHBoxLayout()
+        clip_label = QLabel(f"Clipping: {self.settings.clipping_percent}%")
+        clip_label.setMinimumWidth(110)
+        clip_label.setStyleSheet("font-size: 13px;")
+        clip_slider = QSlider(Qt.Orientation.Horizontal)
+        clip_slider.setRange(0, 25)
+        clip_slider.setSingleStep(5)
+        clip_slider.setPageStep(5)
+        clip_slider.setTickPosition(QSlider.TickPosition.TicksBelow)
+        clip_slider.setTickInterval(5)
+        clip_slider.setValue(self.settings.clipping_percent)
+        def on_clip_changed(v):
+            snapped = round(v / 5) * 5
+            clip_slider.setValue(snapped)
+            self.settings.clipping_percent = snapped
+            clip_label.setText(f"Clipping: {snapped}%")
+        clip_slider.valueChanged.connect(on_clip_changed)
+        clip_layout.addWidget(clip_label)
+        clip_layout.addWidget(clip_slider)
+        layout.addLayout(clip_layout)
+
         layout.addSpacing(20)
         section_header("Display Settings")
         toggle_button(
@@ -791,19 +812,32 @@ class MusicPlayer(QMainWindow):
             self.search_results.clear()
             self.search_stack.setCurrentIndex(0)
 
+    @staticmethod
+    def _normalize_for_search(text):
+        result = []
+        for c in unicodedata.normalize('NFKD', text):
+            if unicodedata.category(c) == 'Mn':
+                continue
+            result.append(c)
+        normalized = ''.join(result)
+        turkish_map = {'ı': 'i', 'İ': 'i'}
+        normalized = ''.join(turkish_map.get(c, c) for c in normalized)
+        return normalized.lower()
+
     def perform_search(self):
-        query = self.search_input.text().strip().lower()
+        query = self.search_input.text().strip()
         if not query:
             self.search_results.clear()
             self.search_stack.setCurrentIndex(0)
             return
+        normalized_query = self._normalize_for_search(query)
         self.search_results.clear()
         results = []
         root = getattr(self, 'current_directory', None) or os.path.expanduser("~")
         try:
             for dirpath, _, filenames in os.walk(root):
                 for f in filenames:
-                    if f.lower().endswith(('.mp3', '.wav')) and query in f.lower():
+                    if f.lower().endswith(('.mp3', '.wav')) and normalized_query in self._normalize_for_search(f):
                         results.append(os.path.join(dirpath, f))
         except PermissionError:
             pass
@@ -952,10 +986,16 @@ class MusicPlayer(QMainWindow):
             if audio.channels == 2:
                 frames = samples.reshape((-1, 2))
                 
-                # Normalize to target RMS
-                rms = np.sqrt(np.mean(frames ** 2))
-                if rms > 0:
-                    frames = frames * (NORMALIZE_RMS_TARGET / rms)
+                # Normalize so the (100 - clipping_percent)th percentile of
+                # absolute values hits 0dBFS. E.g. 10% clipping → 90th percentile.
+                # Top N% peaks may clip (caught by limiter), but the average
+                # loudness is dramatically boosted — quiet tracks get pulled up to 0dB.
+                clip = self.settings.clipping_percent if self.settings.clipping_percent > 0 else 1
+                pct = 100 - clip
+                abs_vals = np.abs(frames)
+                threshold = np.percentile(abs_vals, pct)
+                if threshold > 0:
+                    frames = frames * (32767.0 / threshold)
                 
                 # Apply limiter if enabled (clip to 0dB)
                 if self.settings.limiter:
@@ -972,9 +1012,12 @@ class MusicPlayer(QMainWindow):
                 )
             else:
                 # Mono
-                rms = np.sqrt(np.mean(samples ** 2))
-                if rms > 0:
-                    samples = samples * (NORMALIZE_RMS_TARGET / rms)
+                clip = self.settings.clipping_percent if self.settings.clipping_percent > 0 else 1
+                pct = 100 - clip
+                abs_vals = np.abs(samples)
+                threshold = np.percentile(abs_vals, pct)
+                if threshold > 0:
+                    samples = samples * (32767.0 / threshold)
                 
                 if self.settings.limiter:
                     samples = np.clip(samples, -32767, 32767)
