@@ -10,7 +10,7 @@ from PyQt6.QtWidgets import (
     QTreeWidget, QTreeWidgetItem, QTableWidget, QTableWidgetItem,
     QPushButton, QLabel, QMenuBar, QMenu, QFileDialog,
     QMessageBox, QAbstractItemView, QHeaderView, QSplitter, QDialog,
-    QSizePolicy,
+    QSizePolicy, QLineEdit, QListWidget, QListWidgetItem, QStackedWidget,
 )
 from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal, QPoint
 from PyQt6.QtGui import QAction, QColor, QPainter, QPen, QKeyEvent, QPolygon
@@ -278,17 +278,56 @@ class MusicPlayer(QMainWindow):
         browser_widget = QWidget()
         layout = QVBoxLayout(browser_widget)
         layout.setContentsMargins(10, 10, 5, 10)
+
+        header_layout = QHBoxLayout()
         label = QLabel("File Browser")
         label.setStyleSheet("font-size: 14px; font-weight: bold; color: #ffffff;")
-        layout.addWidget(label)
+        header_layout.addWidget(label)
+
+        self.search_input = QLineEdit()
+        self.search_input.setPlaceholderText("Search songs...")
+        self.search_input.setClearButtonEnabled(True)
+        self.search_input.setStyleSheet("""
+            QLineEdit {
+                background-color: #3a3a3a;
+                color: #ffffff;
+                border: 1px solid #555555;
+                border-radius: 4px;
+                padding: 4px 8px;
+                font-size: 12px;
+            }
+            QLineEdit:focus {
+                border: 1px solid #1db954;
+            }
+        """)
+        self.search_input.textChanged.connect(self.on_search_text_changed)
+        header_layout.addWidget(self.search_input)
+        layout.addLayout(header_layout)
+
+        self.search_stack = QStackedWidget()
+
         self.file_tree = QTreeWidget()
         self.file_tree.setHeaderHidden(True)
         self.file_tree.itemDoubleClicked.connect(self.on_item_double_clicked)
         self.file_tree.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        layout.addWidget(self.file_tree)
+        self.search_stack.addWidget(self.file_tree)
+
+        self.search_results = QListWidget()
+        self.search_results.itemClicked.connect(self.on_search_item_clicked)
+        self.search_results.itemDoubleClicked.connect(self.on_search_item_double_clicked)
+        self.search_stack.addWidget(self.search_results)
+
+        self.search_stack.setCurrentIndex(0)
+        layout.addWidget(self.search_stack)
+
         add_btn = QPushButton("Add to Playlist")
         add_btn.clicked.connect(self.add_selected_to_playlist)
         layout.addWidget(add_btn)
+
+        self.search_timer = QTimer()
+        self.search_timer.setSingleShot(True)
+        self.search_timer.timeout.connect(self.perform_search)
+
         self.splitter.addWidget(browser_widget)
 
     def _setup_playlist_panel(self):
@@ -426,6 +465,9 @@ class MusicPlayer(QMainWindow):
             QTreeWidget QScrollBar:vertical { background: #3a3a3a; }
             QTreeWidget QScrollBar::handle:vertical { background: #1db954; border-radius: 4px; min-height: 30px; }
             QTreeWidget QScrollBar::add-line:vertical, QTreeWidget QScrollBar::sub-line:vertical { height: 0px; }
+            QListWidget { background-color: #3a3a3a; border: none; color: #a0a0a0; padding: 10px; }
+            QListWidget::item { padding: 5px; color: #a0a0a0; }
+            QListWidget::item:hover { background-color: #454545; }
             QTableWidget { background-color: #3a3a3a; border: none; color: #a0a0a0; gridline-color: #505050; }
             QTableWidget::item { padding: 8px; border-right: 1px solid #505050; background-color: #3a3a3a; }
             QTableWidget::item:alternate { background-color: #454545; }
@@ -573,6 +615,7 @@ class MusicPlayer(QMainWindow):
             self.load_directory(folder)
 
     def load_directory(self, path):
+        self.current_directory = path
         self.file_tree.clear()
         self.populate_tree(None, path, lazy=False)
 
@@ -716,6 +759,14 @@ class MusicPlayer(QMainWindow):
         self.update_playlist_table()
 
     def add_selected_to_playlist(self):
+        if hasattr(self, 'search_input') and self.search_input.text().strip():
+            for i in range(self.search_results.count()):
+                item = self.search_results.item(i)
+                if item.checkState() == Qt.CheckState.Checked:
+                    filepath = item.data(Qt.ItemDataRole.UserRole)
+                    if filepath:
+                        self.add_to_playlist(filepath)
+            return
         for item in self.file_tree.selectedItems():
             path = item.data(0, Qt.ItemDataRole.UserRole)
             item_type = item.data(0, Qt.ItemDataRole.UserRole + 1)
@@ -729,6 +780,57 @@ class MusicPlayer(QMainWindow):
             for file in sorted(files):
                 if file.lower().endswith(('.mp3', '.wav')):
                     self.add_to_playlist(os.path.join(root, file))
+
+    def on_search_text_changed(self, text):
+        query = text.strip()
+        if query:
+            self.search_timer.stop()
+            self.search_timer.start(200)
+        else:
+            self.search_timer.stop()
+            self.search_results.clear()
+            self.search_stack.setCurrentIndex(0)
+
+    def perform_search(self):
+        query = self.search_input.text().strip().lower()
+        if not query:
+            self.search_results.clear()
+            self.search_stack.setCurrentIndex(0)
+            return
+        self.search_results.clear()
+        results = []
+        root = getattr(self, 'current_directory', None) or os.path.expanduser("~")
+        try:
+            for dirpath, _, filenames in os.walk(root):
+                for f in filenames:
+                    if f.lower().endswith(('.mp3', '.wav')) and query in f.lower():
+                        results.append(os.path.join(dirpath, f))
+        except PermissionError:
+            pass
+        results.sort(key=lambda x: os.path.basename(x).lower())
+        for filepath in results:
+            name = os.path.basename(filepath)
+            item = QListWidgetItem(name)
+            item.setToolTip(filepath)
+            item.setData(Qt.ItemDataRole.UserRole, filepath)
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            item.setCheckState(Qt.CheckState.Unchecked)
+            self.search_results.addItem(item)
+        if not results:
+            no_match = QListWidgetItem("No songs found")
+            no_match.setFlags(no_match.flags() & ~Qt.ItemFlag.ItemIsUserCheckable)
+            no_match.setForeground(QColor("#888888"))
+            self.search_results.addItem(no_match)
+        self.search_stack.setCurrentIndex(1)
+
+    def on_search_item_clicked(self, item):
+        current = item.checkState()
+        item.setCheckState(Qt.CheckState.Unchecked if current == Qt.CheckState.Checked else Qt.CheckState.Checked)
+
+    def on_search_item_double_clicked(self, item):
+        filepath = item.data(Qt.ItemDataRole.UserRole)
+        if filepath:
+            self.add_to_playlist(filepath)
 
     def remove_from_playlist(self):
         rows = sorted(set(item.row() for item in self.playlist_table.selectedItems()), reverse=True)
