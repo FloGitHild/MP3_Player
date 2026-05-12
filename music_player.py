@@ -752,7 +752,7 @@ class MusicPlayer(QMainWindow):
         keys = ['title', 'artist', 'year', 'ctime', 'duration_sec']
         if 0 <= column < len(keys):
             self.playlist.sort(
-                key=lambda x: x.get(keys[column], "" if column != 4 else 0),
+                key=lambda x: str(x.get(keys[column], "" if column != 4 else 0)).lower(),
                 reverse=reverse,
             )
         self.update_playlist_table()
